@@ -1,36 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Doomsday
 
-## Getting Started
+MVP платформы лимитированных дропов одежды (модель в духе Supreme/Nike SNKRS): таймер старта/окончания продажи, ограниченный сток по размерам, бронирование товара с автоматическим сбросом при неоплате.
 
-First, run the development server:
+Архитектура и разработка (включая AI-ассистированное кодирование) — [@yngnoise](https://github.com/yngnoise). Локальный MVP, не задеплоен, без адаптивной вёрстки.
+
+## Стек
+
+**Backend:** Go, PostgreSQL, Redis
+**Frontend:** Next.js, TypeScript
+
+## Ключевая механика
+
+- **Защита от оверселлинга** — атомарная проверка и списание стока через Lua-скрипт в Redis: rate-limit, проверка дубля резервации и декремент остатка выполняются одной операцией, что исключает гонку при одновременном спросе на последнюю единицу товара.
+- **Лист ожидания** — Redis sorted set: если бронь истекла без оплаты, сток автоматически возвращается, и следующий в очереди получает email с предложением купить.
+- **Real-time обновление остатков** через SSE — фронтенд видит актуальный сток без перезагрузки страницы.
+- **Фоновый scheduler** — очищает истёкшие резервации каждые 30 секунд.
+- **OTP-авторизация** — вход по коду из письма, без пароля.
+- **Оплата** — реализован флоу оформления заказа (доставка, подтверждение) без интеграции реального платёжного провайдера; после оформления на почту отправляется письмо с подтверждением.
+
+## Модули (`drop/`)
+
+- **auth / otp_handler** — OTP-авторизация по email
+- **handler** — резервация товара, оформление заказа
+- **scheduler** — фоновая очистка истёкших резерваций
+- **sse** — real-time обновление остатков на клиенте
+- **email** — транзакционные письма (SMTP)
+- **admin_handler** — админка
+
+## Локальный запуск
+
+Требуется Go 1.22+, Node.js, локальные PostgreSQL и Redis (порты по умолчанию: Postgres 5432, Redis 6379).
 
 ```bash
+# 1. База данных
+psql -f schema.sql
+psql -f seed_drops.sql   # тестовые данные (опционально)
+
+# 2. Переменные окружения
+cp .env.local.example .env.local   # заполнить SMTP и DB credentials
+
+# 3. Backend
+go run main.go
+
+# 4. Frontend
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Статус проекта
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Локальный MVP: основная механика (бронирование, антиоверселлинг, лист ожидания, OTP) реализована и работает. Нет: адаптивной вёрстки, интеграции с реальным платёжным провайдером, деплоя.
