@@ -1,0 +1,551 @@
+package drop
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+)
+
+// Lua script — atomically:
+//  1. Rate-limit check
+//  2. Duplicate reservation check
+//  3. Decrement size-specific stock
+//  4. Decrement total stock
+//
+// KEYS[1] = drop:{id}:size:{size}:stock
+// KEYS[2] = drop:{id}:stock  (total)
+// KEYS[3] = drop:{id}:reservations
+// KEYS[4] = drop:{id}:rl:{userID}
+//
+// Returns: 0=ok, -1=sold out (size), -2=already reserved, -3=rate limited
+const reserveScript = `
+local size_key  = KEYS[1]
+local total_key = KEYS[2]
+local resv_key  = KEYS[3]
+local rl_key    = KEYS[4]
+local user_id   = ARGV[1]
+local resv_id   = ARGV[2]
+local rl_window = tonumber(ARGV[3])
+local rl_max    = tonumber(ARGV[4])
+
+local attempts = redis.call('INCR', rl_key)
+if attempts == 1 then redis.call('EXPIRE', rl_key, rl_window) end
+if attempts > rl_max then return -3 end
+
+if redis.call('HEXISTS', resv_key, user_id) == 1 then return -2 end
+
+local size_left = tonumber(redis.call('GET', size_key))
+if size_left == nil or size_left <= 0 then return -1 end
+
+redis.call('DECR', size_key)
+redis.call('DECR', total_key)
+redis.call('HSET', resv_key, user_id, resv_id)
+return 0
+`
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HANDLER
+// ─────────────────────────────────────────────────────────────────────────────
+
+type Handler struct {
+	redis  *redis.Client
+	db     *pgxpool.Pool
+	sha    string
+	hub    *Hub
+	mailer *Mailer
+	logger *slog.Logger
+}
+
+func NewHandler(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, hub *Hub, mailer *Mailer, logger *slog.Logger) (*Handler, error) {
+	sha, err := rdb.ScriptLoad(ctx, reserveScript).Result()
+	if err != nil {
+		return nil, fmt.Errorf("loading Lua script: %w", err)
+	}
+	h := &Handler{redis: rdb, db: db, sha: sha, hub: hub, mailer: mailer, logger: logger}
+	if err := h.initStock(ctx); err != nil {
+		logger.WarnContext(ctx, "stock init warning", slog.Any("err", err))
+	}
+	return h, nil
+}
+
+// initStock seeds Redis from DB for every active drop (SETNX — never overwrites live counter).
+func (h *Handler) initStock(ctx context.Context) error {
+	// Seed total stock
+	rows, err := h.db.Query(ctx, `
+		SELECT d.id,
+			d.total_stock - COALESCE(
+				(SELECT COUNT(*) FROM reservations r
+				 WHERE r.drop_id = d.id AND r.status IN ('pending','completed')), 0
+			) AS remaining
+		FROM drops d WHERE d.ends_at > NOW()
+	`)
+	if err != nil {
+		return fmt.Errorf("querying active drops: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var remaining int64
+		if err := rows.Scan(&id, &remaining); err != nil {
+			continue
+		}
+		h.redis.SetNX(ctx, fmt.Sprintf("drop:%s:stock", id), remaining, 0)
+
+		// Seed per-size stock
+		sizeRows, err := h.db.Query(ctx, `
+			SELECT ds.label,
+				ds.stock - COALESCE(
+					(SELECT COUNT(*) FROM reservations r
+					 WHERE r.drop_id = ds.drop_id AND r.size = ds.label AND r.status IN ('pending','completed')), 0
+				) AS remaining
+			FROM drop_sizes ds WHERE ds.drop_id = $1
+		`, id)
+		if err != nil {
+			h.logger.WarnContext(ctx, "size stock query failed", slog.String("drop", id), slog.Any("err", err))
+			continue
+		}
+		for sizeRows.Next() {
+			var label string
+			var sizeRemaining int64
+			if err := sizeRows.Scan(&label, &sizeRemaining); err != nil {
+				continue
+			}
+			key := fmt.Sprintf("drop:%s:size:%s:stock", id, label)
+			h.redis.SetNX(ctx, key, sizeRemaining, 0)
+			h.logger.InfoContext(ctx, "size stock initialized",
+				slog.String("drop", id), slog.String("size", label), slog.Int64("remaining", sizeRemaining))
+		}
+		sizeRows.Close()
+	}
+	return nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/drops  — public list for the archive page
+// ─────────────────────────────────────────────────────────────────────────────
+
+type DropListItem struct {
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	PriceCents     int       `json:"price_cents"`
+	TotalStock     int       `json:"total_stock"`
+	StartsAt       time.Time `json:"starts_at"`
+	EndsAt         time.Time `json:"ends_at"`
+	StockRemaining int64     `json:"stock_remaining"`
+	Phase          string    `json:"phase"`
+}
+
+func (h *Handler) ListDrops(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	rows, err := h.db.Query(ctx, `
+		SELECT id, name, price_cents, total_stock, starts_at, ends_at
+		FROM drops ORDER BY starts_at DESC
+	`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	defer rows.Close()
+
+	now := time.Now().UTC()
+	result := []DropListItem{}
+	for rows.Next() {
+		var d DropListItem
+		if err := rows.Scan(&d.ID, &d.Name, &d.PriceCents, &d.TotalStock, &d.StartsAt, &d.EndsAt); err != nil {
+			continue
+		}
+		d.StockRemaining, _ = h.redis.Get(ctx, fmt.Sprintf("drop:%s:stock", d.ID)).Int64()
+		switch {
+		case now.Before(d.StartsAt):
+			d.Phase = "pre"
+		case now.After(d.EndsAt):
+			d.Phase = "ended"
+		case d.StockRemaining == 0:
+			d.Phase = "sold_out"
+		default:
+			d.Phase = "live"
+		}
+		result = append(result, d)
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/auth/guest
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (h *Handler) GuestToken(w http.ResponseWriter, r *http.Request) {
+	userID, token, err := IssueGuestToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not issue token")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": token, "user_id": userID})
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/drops/{dropID}
+// ─────────────────────────────────────────────────────────────────────────────
+
+type SizeInfo struct {
+	Label string `json:"label"`
+	Stock int64  `json:"stock"`
+}
+
+type dropRecord struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	PriceCents  int       `json:"price_cents"`
+	TotalStock  int       `json:"total_stock"`
+	StartsAt    time.Time `json:"starts_at"`
+	EndsAt      time.Time `json:"ends_at"`
+}
+
+type GetDropResponse struct {
+	dropRecord
+	StockRemaining int64      `json:"stock_remaining"`
+	Phase          string     `json:"phase"`
+	Sizes          []SizeInfo `json:"sizes"`
+}
+
+func (h *Handler) GetDrop(w http.ResponseWriter, r *http.Request) {
+	dropID := r.PathValue("dropID")
+	if dropID == "" {
+		writeError(w, http.StatusBadRequest, "missing drop id")
+		return
+	}
+	d, err := h.fetchDrop(r.Context(), dropID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "drop not found")
+		return
+	}
+
+	ctx := r.Context()
+	total, _ := h.redis.Get(ctx, fmt.Sprintf("drop:%s:stock", dropID)).Int64()
+
+	// Load per-size stock from Redis
+	sizes, _ := h.fetchSizes(ctx, dropID)
+
+	now := time.Now().UTC()
+	phase := "pre"
+	switch {
+	case now.After(d.EndsAt):
+		phase = "ended"
+	case now.After(d.StartsAt) && total == 0:
+		phase = "sold_out"
+	case now.After(d.StartsAt):
+		phase = "live"
+	}
+
+	writeJSON(w, http.StatusOK, GetDropResponse{
+		dropRecord:     *d,
+		StockRemaining: total,
+		Phase:          phase,
+		Sizes:          sizes,
+	})
+}
+
+// fetchSizes loads per-size stock from Redis, falling back to DB labels if keys missing.
+func (h *Handler) fetchSizes(ctx context.Context, dropID string) ([]SizeInfo, error) {
+	rows, err := h.db.Query(ctx,
+		`SELECT label FROM drop_sizes WHERE drop_id = $1 ORDER BY
+			CASE label WHEN 'XS' THEN 1 WHEN 'S' THEN 2 WHEN 'M' THEN 3
+			           WHEN 'L' THEN 4 WHEN 'XL' THEN 5 WHEN 'XXL' THEN 6 ELSE 99 END`,
+		dropID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sizes []SizeInfo
+	for rows.Next() {
+		var label string
+		if err := rows.Scan(&label); err != nil {
+			continue
+		}
+		key := fmt.Sprintf("drop:%s:size:%s:stock", dropID, label)
+		stock, _ := h.redis.Get(ctx, key).Int64()
+		sizes = append(sizes, SizeInfo{Label: label, Stock: stock})
+	}
+	return sizes, nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/reserve
+// ─────────────────────────────────────────────────────────────────────────────
+
+type ReserveRequest struct {
+	DropID string `json:"drop_id"`
+	ItemID string `json:"item_id"`
+	Size   string `json:"size"`
+	Email  string `json:"email"`
+}
+
+type ReserveResponse struct {
+	ReservationID string    `json:"reservation_id"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	StockLeft     int64     `json:"stock_left"`
+}
+
+func (h *Handler) ReserveItem(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var req ReserveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.DropID == "" || req.ItemID == "" {
+		writeError(w, http.StatusBadRequest, "drop_id and item_id are required")
+		return
+	}
+	if req.Size == "" {
+		writeError(w, http.StatusBadRequest, "size is required")
+		return
+	}
+	userID, ok := userIDFromContext(ctx)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	d, err := h.fetchDrop(ctx, req.DropID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "drop not found")
+		return
+	}
+	now := time.Now().UTC()
+	if now.Before(d.StartsAt) {
+		writeError(w, http.StatusConflict, "drop has not started")
+		return
+	}
+	if now.After(d.EndsAt) {
+		writeError(w, http.StatusGone, "drop has ended")
+		return
+	}
+
+	reservationID := uuid.NewString()
+	code, totalLeft, err := h.reserveInRedis(ctx, req.DropID, req.Size, userID, reservationID)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "redis reserve", slog.Any("err", err))
+		writeError(w, http.StatusServiceUnavailable, "try again shortly")
+		return
+	}
+	switch code {
+	case -3:
+		writeError(w, http.StatusTooManyRequests, "too many attempts")
+		return
+	case -2:
+		// User already has an active reservation — return it so the frontend can redirect
+		var existID string
+		var existExpires time.Time
+		err := h.db.QueryRow(ctx, `
+			SELECT id, expires_at FROM reservations
+			WHERE drop_id=$1 AND user_id=$2 AND status='pending' AND expires_at > NOW()
+			ORDER BY created_at DESC LIMIT 1
+		`, req.DropID, userID).Scan(&existID, &existExpires)
+		if err == nil {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":          "already reserved by this user",
+				"reservation_id": existID,
+				"expires_at":     existExpires.UTC().Format(time.RFC3339),
+			})
+			return
+		}
+		writeError(w, http.StatusConflict, "already reserved by this user")
+		return
+	case -1:
+		writeError(w, http.StatusGone, fmt.Sprintf("size %s is sold out", req.Size))
+		return
+	}
+
+	h.hub.Broadcast(req.DropID, totalLeft)
+	expiresAt := now.Add(10 * time.Minute)
+
+	go func() {
+		ctx2, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := h.persistReservation(ctx2, reservationID, req.DropID, req.ItemID, userID, req.Size, expiresAt); err != nil {
+			h.logger.ErrorContext(ctx2, "persist failed", slog.String("id", reservationID), slog.Any("err", err))
+		}
+	}()
+
+	if req.Email != "" {
+		h.mailer.SendReservationConfirmation(ctx, req.Email, userID, d.Name, reservationID, expiresAt)
+	}
+
+	writeJSON(w, http.StatusCreated, ReserveResponse{
+		ReservationID: reservationID,
+		ExpiresAt:     expiresAt,
+		StockLeft:     totalLeft,
+	})
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/checkout/{reservationID}/complete
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (h *Handler) CompleteCheckout(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	reservationID := r.PathValue("reservationID")
+	userID, ok := userIDFromContext(ctx)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	var req struct {
+		Email   string `json:"email"`
+		Name    string `json:"name"`
+		Address string `json:"address"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	var expiresAt time.Time
+	var dropID, itemID, size string
+	err := h.db.QueryRow(ctx, `
+		SELECT r.expires_at, r.drop_id, r.item_id, r.size
+		FROM reservations r
+		WHERE r.id = $1 AND r.user_id = $2 AND r.status = 'pending'
+	`, reservationID, userID).Scan(&expiresAt, &dropID, &itemID, &size)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "reservation not found or already used")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if time.Now().After(expiresAt) {
+		writeError(w, http.StatusGone, "reservation expired")
+		return
+	}
+
+	orderID := "ORD-" + uuid.NewString()[:8]
+	if _, err := h.db.Exec(ctx, `UPDATE reservations SET status='completed' WHERE id=$1`, reservationID); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not complete order")
+		return
+	}
+
+	if req.Email != "" {
+		d, _ := h.fetchDrop(ctx, dropID)
+		priceCents := 0
+		if d != nil {
+			priceCents = d.PriceCents
+		}
+		h.mailer.SendOrderConfirmation(ctx, req.Email, req.Name, itemID, orderID, priceCents)
+	}
+
+	h.logger.Info("order completed",
+		slog.String("order", orderID),
+		slog.String("user", userID),
+		slog.String("size", size),
+	)
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"order_id": orderID,
+		"status":   "completed",
+		"size":     size,
+	})
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/waitlist
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (h *Handler) JoinWaitlist(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	userID, ok := userIDFromContext(ctx)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		DropID string `json:"drop_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	key := fmt.Sprintf("drop:%s:waitlist", req.DropID)
+	score := float64(time.Now().UnixMilli())
+	h.redis.ZAddNX(ctx, key, redis.Z{Score: score, Member: userID})
+	rank, _ := h.redis.ZRank(ctx, key, userID).Result()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"position": int(rank) + 1,
+		"message":  fmt.Sprintf("You are #%d in the queue.", int(rank)+1),
+	})
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTERNAL
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (h *Handler) reserveInRedis(ctx context.Context, dropID, size, userID, reservationID string) (int64, int64, error) {
+	sizeKey := fmt.Sprintf("drop:%s:size:%s:stock", dropID, size)
+	totalKey := fmt.Sprintf("drop:%s:stock", dropID)
+	resvKey := fmt.Sprintf("drop:%s:reservations", dropID)
+	rlKey := fmt.Sprintf("drop:%s:rl:%s", dropID, userID)
+
+	pipe := h.redis.Pipeline()
+	evalCmd := pipe.EvalSha(ctx, h.sha,
+		[]string{sizeKey, totalKey, resvKey, rlKey},
+		userID, reservationID, "10", "3",
+	)
+	totalCmd := pipe.Get(ctx, totalKey)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return 0, 0, fmt.Errorf("redis pipeline: %w", err)
+	}
+	code, err := evalCmd.Int64()
+	if err != nil {
+		return 0, 0, fmt.Errorf("evalsha: %w", err)
+	}
+	totalLeft, _ := totalCmd.Int64()
+	return code, totalLeft, nil
+}
+
+func (h *Handler) persistReservation(ctx context.Context, id, dropID, itemID, userID, size string, expiresAt time.Time) error {
+	_, err := h.db.Exec(ctx, `
+		INSERT INTO reservations (id, drop_id, item_id, user_id, size, status, expires_at, created_at)
+		VALUES ($1,$2,$3,$4,$5,'pending',$6,NOW())
+		ON CONFLICT (id) DO NOTHING
+	`, id, dropID, itemID, userID, size, expiresAt)
+	return err
+}
+
+func (h *Handler) fetchDrop(ctx context.Context, dropID string) (*dropRecord, error) {
+	cacheKey := fmt.Sprintf("drop:%s:meta", dropID)
+	if raw, err := h.redis.Get(ctx, cacheKey).Bytes(); err == nil {
+		var d dropRecord
+		if json.Unmarshal(raw, &d) == nil {
+			return &d, nil
+		}
+	}
+	var d dropRecord
+	err := h.db.QueryRow(ctx, `
+		SELECT id, name, description, price_cents, total_stock, starts_at, ends_at
+		FROM drops WHERE id = $1
+	`, dropID).Scan(&d.ID, &d.Name, &d.Description, &d.PriceCents, &d.TotalStock, &d.StartsAt, &d.EndsAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("drop %q not found", dropID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if b, err := json.Marshal(d); err == nil {
+		h.redis.Set(ctx, cacheKey, b, 10*time.Second)
+	}
+	return &d, nil
+}
