@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, useState, useEffect, useCallback } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
@@ -33,7 +33,7 @@ function Field({ label, value, onChange, placeholder, type = "text" }: {
   );
 }
 
-export default function CheckoutPage() {
+function CheckoutContent() {
   const params       = useParams<{ reservationID: string }>();
   const searchParams = useSearchParams();
   const router       = useRouter();
@@ -328,5 +328,13 @@ export default function CheckoutPage() {
         </motion.div>
       </div>
     </div>
+  );
+}
+
+export default function CheckoutPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-black" />}>
+      <CheckoutContent />
+    </Suspense>
   );
 }

@@ -35,10 +35,7 @@ func emailFromContext(ctx context.Context) string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func jwtSecret() []byte {
-	if s := os.Getenv("JWT_SECRET"); s != "" {
-		return []byte(s)
-	}
-	return []byte("doomsday-dev-secret-CHANGE-IN-PROD")
+	return []byte(os.Getenv("JWT_SECRET"))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

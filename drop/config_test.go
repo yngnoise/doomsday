@@ -1,0 +1,34 @@
+package drop
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestValidateSecurityConfig(t *testing.T) {
+	t.Run("accepts strong credentials", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", strings.Repeat("j", minJWTSecretLength))
+		t.Setenv("ADMIN_PASSWORD", strings.Repeat("a", minAdminPasswordLength))
+		if err := ValidateSecurityConfig(); err != nil {
+			t.Fatalf("ValidateSecurityConfig() error = %v", err)
+		}
+	})
+
+	t.Run("rejects missing credentials", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", "")
+		t.Setenv("ADMIN_PASSWORD", "")
+		err := ValidateSecurityConfig()
+		if err == nil || !strings.Contains(err.Error(), "JWT_SECRET is required") || !strings.Contains(err.Error(), "ADMIN_PASSWORD is required") {
+			t.Fatalf("ValidateSecurityConfig() error = %v", err)
+		}
+	})
+
+	t.Run("rejects weak credentials", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", "short")
+		t.Setenv("ADMIN_PASSWORD", "doomsday-admin")
+		err := ValidateSecurityConfig()
+		if err == nil || !strings.Contains(err.Error(), "JWT_SECRET must be at least") || !strings.Contains(err.Error(), "ADMIN_PASSWORD must be at least") {
+			t.Fatalf("ValidateSecurityConfig() error = %v", err)
+		}
+	})
+}

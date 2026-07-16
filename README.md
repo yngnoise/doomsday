@@ -37,12 +37,18 @@ psql -f schema.sql
 psql -f seed_drops.sql   # тестовые данные (опционально)
 
 # 2. Переменные окружения
-cp .env.local.example .env.local   # заполнить SMTP и DB credentials
+cp .env.example .env               # задать DB, JWT и admin credentials
 
-# 3. Backend
+# Локальная ротация JWT/admin-секретов без вывода значений в консоль
+powershell -ExecutionPolicy Bypass -File scripts/rotate-local-secrets.ps1
+
+# 3. OTP-таблица
+psql -f migrate_otp.sql
+
+# 4. Backend
 go run main.go
 
-# 4. Frontend
+# 5. Frontend
 npm install
 npm run dev
 ```

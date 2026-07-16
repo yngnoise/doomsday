@@ -16,6 +16,9 @@ import (
 
 func main() {
 	_ = godotenv.Load()
+	if err := drop.ValidateSecurityConfig(); err != nil {
+		log.Fatalf("security configuration: %v", err)
+	}
 
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -34,7 +37,7 @@ func main() {
 	// ── Postgres ───────────────────────────────────────────────────────────
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://postgres:password@localhost:5432/doomsday"
+		log.Fatal("DATABASE_URL is required")
 	}
 	db, err := pgxpool.New(ctx, dbURL)
 	if err != nil {

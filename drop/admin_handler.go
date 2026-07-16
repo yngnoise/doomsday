@@ -24,10 +24,7 @@ func NewAdminHandler(rdb *redis.Client, db *pgxpool.Pool, logger *slog.Logger) *
 }
 
 func adminPassword() string {
-	if p := os.Getenv("ADMIN_PASSWORD"); p != "" {
-		return p
-	}
-	return "doomsday-admin"
+	return os.Getenv("ADMIN_PASSWORD")
 }
 
 // ─── POST /api/admin/login ────────────────────────────────────────────────────

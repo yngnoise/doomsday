@@ -2,9 +2,9 @@
 
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
-export default function ConfirmationPage() {
+function ConfirmationContent() {
   const searchParams = useSearchParams();
   const router       = useRouter();
   const orderID  = searchParams.get("order") ?? "—";
@@ -83,5 +83,13 @@ export default function ConfirmationPage() {
         <span className="text-xs font-mono tracking-widest uppercase text-zinc-700">End of Days Sale System v3.0</span>
       </footer>
     </div>
+  );
+}
+
+export default function ConfirmationPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-black" />}>
+      <ConfirmationContent />
+    </Suspense>
   );
 }

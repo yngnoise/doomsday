@@ -110,7 +110,7 @@ function ScrambleText({ text, className, style, tag = "span" }: {
   text: string; className?: string; style?: React.CSSProperties; tag?: "span" | "h1";
 }) {
   const { display, scramble } = useScramble(text);
-  const Tag = tag as keyof JSX.IntrinsicElements;
+  const Tag = tag as keyof React.JSX.IntrinsicElements;
   return (
     <Tag className={className} style={style} onMouseEnter={scramble}>{display}</Tag>
   );
