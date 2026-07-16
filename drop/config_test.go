@@ -31,4 +31,25 @@ func TestValidateSecurityConfig(t *testing.T) {
 			t.Fatalf("ValidateSecurityConfig() error = %v", err)
 		}
 	})
+
+	t.Run("requires explicit production CORS origins", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", strings.Repeat("j", minJWTSecretLength))
+		t.Setenv("ADMIN_PASSWORD", strings.Repeat("a", minAdminPasswordLength))
+		t.Setenv("APP_ENV", "production")
+		t.Setenv("CORS_ORIGINS", "")
+		err := ValidateSecurityConfig()
+		if err == nil || !strings.Contains(err.Error(), "CORS_ORIGINS is required in production") {
+			t.Fatalf("ValidateSecurityConfig() error = %v", err)
+		}
+	})
+
+	t.Run("rejects wildcard CORS origins", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", strings.Repeat("j", minJWTSecretLength))
+		t.Setenv("ADMIN_PASSWORD", strings.Repeat("a", minAdminPasswordLength))
+		t.Setenv("CORS_ORIGINS", "*")
+		err := ValidateSecurityConfig()
+		if err == nil || !strings.Contains(err.Error(), "must not contain a wildcard") {
+			t.Fatalf("ValidateSecurityConfig() error = %v", err)
+		}
+	})
 }

@@ -1,4 +1,25 @@
--- ── 5 new drops ──────────────────────────────────────────────────────────────
+-- Base drop used by the product assets.
+INSERT INTO drops (id, name, description, price_cents, total_stock, starts_at, ends_at)
+VALUES (
+  'dmsdy-ss25-001',
+  'WRAITH FIELD JACKET',
+  'Military-grade waxed Ventile. Extracted from the wreckage. Last production run. No restocks. Ever.',
+  66600, 120,
+  NOW() + INTERVAL '2 minutes',
+  NOW() + INTERVAL '32 minutes'
+)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO drop_sizes (drop_id, label, stock) VALUES
+  ('dmsdy-ss25-001', 'XS',  20),
+  ('dmsdy-ss25-001', 'S',   20),
+  ('dmsdy-ss25-001', 'M',   20),
+  ('dmsdy-ss25-001', 'L',   20),
+  ('dmsdy-ss25-001', 'XL',  20),
+  ('dmsdy-ss25-001', 'XXL', 20)
+ON CONFLICT (drop_id, label) DO NOTHING;
+
+-- Additional sample drops.
 -- Run: psql -U postgres -d doomsday -f seed_drops.sql
 
 INSERT INTO drops (id, name, description, price_cents, total_stock, starts_at, ends_at) VALUES
@@ -36,7 +57,8 @@ INSERT INTO drops (id, name, description, price_cents, total_stock, starts_at, e
  'Primaloft Gold insulation. Featherweight shell. -20°C rated. The last layer.',
  77700, 100,
  NOW() + INTERVAL '7 days',
- NOW() + INTERVAL '7 days 30 minutes');
+ NOW() + INTERVAL '7 days 30 minutes')
+ON CONFLICT (id) DO NOTHING;
 
 -- ── Sizes — 6 labels, stock split evenly ─────────────────────────────────────
 
@@ -44,31 +66,36 @@ INSERT INTO drops (id, name, description, price_cents, total_stock, starts_at, e
 INSERT INTO drop_sizes (drop_id, label, stock) VALUES
   ('dmsdy-ss25-002', 'XS', 13), ('dmsdy-ss25-002', 'S',  13),
   ('dmsdy-ss25-002', 'M',  13), ('dmsdy-ss25-002', 'L',  13),
-  ('dmsdy-ss25-002', 'XL', 13), ('dmsdy-ss25-002', 'XXL',15);
+  ('dmsdy-ss25-002', 'XL', 13), ('dmsdy-ss25-002', 'XXL',15)
+ON CONFLICT (drop_id, label) DO NOTHING;
 
 -- VOID TECH HOODIE — 60 units / 6 sizes = 10 each
 INSERT INTO drop_sizes (drop_id, label, stock) VALUES
   ('dmsdy-ss25-003', 'XS', 10), ('dmsdy-ss25-003', 'S',  10),
   ('dmsdy-ss25-003', 'M',  10), ('dmsdy-ss25-003', 'L',  10),
-  ('dmsdy-ss25-003', 'XL', 10), ('dmsdy-ss25-003', 'XXL',10);
+  ('dmsdy-ss25-003', 'XL', 10), ('dmsdy-ss25-003', 'XXL',10)
+ON CONFLICT (drop_id, label) DO NOTHING;
 
 -- PHANTOM OVERSHIRT — 50 units / 6 sizes = 8 each + 2 remainder to XXL
 INSERT INTO drop_sizes (drop_id, label, stock) VALUES
   ('dmsdy-ss25-004', 'XS', 8), ('dmsdy-ss25-004', 'S',  8),
   ('dmsdy-ss25-004', 'M',  8), ('dmsdy-ss25-004', 'L',  8),
-  ('dmsdy-ss25-004', 'XL', 8), ('dmsdy-ss25-004', 'XXL',10);
+  ('dmsdy-ss25-004', 'XL', 8), ('dmsdy-ss25-004', 'XXL',10)
+ON CONFLICT (drop_id, label) DO NOTHING;
 
 -- BLACKOUT FIELD VEST — 40 units / 6 sizes = 6 each + 4 remainder to XXL
 INSERT INTO drop_sizes (drop_id, label, stock) VALUES
   ('dmsdy-ss25-005', 'XS', 6), ('dmsdy-ss25-005', 'S',  6),
   ('dmsdy-ss25-005', 'M',  6), ('dmsdy-ss25-005', 'L',  6),
-  ('dmsdy-ss25-005', 'XL', 6), ('dmsdy-ss25-005', 'XXL',10);
+  ('dmsdy-ss25-005', 'XL', 6), ('dmsdy-ss25-005', 'XXL',10)
+ON CONFLICT (drop_id, label) DO NOTHING;
 
 -- WRAITH LINER JACKET — 100 units / 6 sizes = 16 each + 4 remainder to XXL
 INSERT INTO drop_sizes (drop_id, label, stock) VALUES
   ('dmsdy-fw25-001', 'XS', 16), ('dmsdy-fw25-001', 'S',  16),
   ('dmsdy-fw25-001', 'M',  16), ('dmsdy-fw25-001', 'L',  16),
-  ('dmsdy-fw25-001', 'XL', 16), ('dmsdy-fw25-001', 'XXL',20);
+  ('dmsdy-fw25-001', 'XL', 16), ('dmsdy-fw25-001', 'XXL',20)
+ON CONFLICT (drop_id, label) DO NOTHING;
 
 -- ── Verify ────────────────────────────────────────────────────────────────────
 SELECT
