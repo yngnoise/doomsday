@@ -88,9 +88,8 @@ func IssueGuestToken() (userID string, tokenStr string, err error) {
 	return
 }
 
-// IssueUserJWT — authenticated user with verified email, 30 days.
-func IssueUserJWT(email string) (tokenStr string, err error) {
-	userID := "u-" + uuid.NewString()[:12]
+// IssueUserJWT issues a token for a stable user record, valid for 30 days.
+func IssueUserJWT(userID, email string) (tokenStr string, err error) {
 	tokenStr, err = signToken(dmsdyClaims{
 		UserID: userID,
 		Email:  email,

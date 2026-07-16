@@ -146,20 +146,30 @@ func (s *Scheduler) promoteWaitlist(ctx context.Context, dropID string, n int64)
 			slog.String("drop", dropID),
 			slog.String("user", userID),
 		)
-		// In production userID would be an email or you'd look up the user record.
-		// For now we log and send email if userID looks like an email.
-		if len(userID) > 3 && containsAt(userID) {
-			s.mailer.SendWaitlistPromotion(ctx, userID, dropID, dropName)
+		var email string
+		if err := s.db.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&email); err != nil {
+			s.logger.ErrorContext(ctx, "waitlist user lookup failed",
+				slog.String("drop", dropID),
+				slog.String("user", userID),
+				slog.Any("err", err),
+			)
+			if addErr := s.redis.ZAdd(ctx, key, redis.Z{Score: m.Score, Member: userID}).Err(); addErr != nil {
+				s.logger.ErrorContext(ctx, "waitlist requeue failed",
+					slog.String("drop", dropID),
+					slog.String("user", userID),
+					slog.Any("err", addErr),
+				)
+			}
+			continue
+		}
+		if err := s.mailer.SendWaitlistPromotion(ctx, email, dropID, dropName); err != nil {
+			if addErr := s.redis.ZAdd(ctx, key, redis.Z{Score: m.Score, Member: userID}).Err(); addErr != nil {
+				s.logger.ErrorContext(ctx, "waitlist requeue after email failure failed",
+					slog.String("drop", dropID),
+					slog.String("user", userID),
+					slog.Any("err", addErr),
+				)
+			}
 		}
 	}
-}
-
-// containsAt is a minimal email check to avoid importing regexp.
-func containsAt(s string) bool {
-	for _, c := range s {
-		if c == '@' {
-			return true
-		}
-	}
-	return false
 }
