@@ -411,7 +411,7 @@ function DropsTab({ drops, token, onRefresh }: { drops: Drop[]; token: string; o
       <AnimatePresence>
         {stockDrop && (
           <Modal title={`Reset Stock — ${stockDrop.name}`} onClose={() => setStockDrop(null)}>
-            <p className="text-xs font-mono text-zinc-500 mb-4">Override Redis stock counter directly.</p>
+            <p className="text-xs font-mono text-zinc-500 mb-4">Set available stock and redistribute it across sizes. PostgreSQL and Redis will be synchronized.</p>
             <div className="space-y-1 mb-4">
               <label className="text-xs font-mono uppercase tracking-widest text-zinc-600">New stock value</label>
               <input value={newStock} onChange={(e) => setNewStock(e.target.value)}

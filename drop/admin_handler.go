@@ -2,6 +2,7 @@ package drop
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -289,8 +291,100 @@ func (h *AdminHandler) ResetStock(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "stock must be >= 0")
 		return
 	}
-	h.redis.Set(ctx, fmt.Sprintf("drop:%s:stock", dropID), req.Stock, 0)
-	writeJSON(w, http.StatusOK, map[string]int{"stock": req.Stock})
+
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not reset stock")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var lockedDropID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM drops WHERE id = $1 FOR UPDATE`, dropID).Scan(&lockedDropID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "drop not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not reset stock")
+		return
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT ds.label,
+		       COUNT(r.id) FILTER (WHERE r.status IN ('pending', 'completed'))::int
+		FROM drop_sizes ds
+		LEFT JOIN reservations r
+		  ON r.drop_id = ds.drop_id AND r.size = ds.label
+		WHERE ds.drop_id = $1
+		GROUP BY ds.label
+		ORDER BY CASE ds.label
+		  WHEN 'XS' THEN 1 WHEN 'S' THEN 2 WHEN 'M' THEN 3
+		  WHEN 'L' THEN 4 WHEN 'XL' THEN 5 WHEN 'XXL' THEN 6 ELSE 99
+		END, ds.label
+	`, dropID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not reset stock")
+		return
+	}
+
+	var labels []string
+	consumed := make(map[string]int)
+	totalConsumed := 0
+	for rows.Next() {
+		var label string
+		var sizeConsumed int
+		if err := rows.Scan(&label, &sizeConsumed); err != nil {
+			rows.Close()
+			writeError(w, http.StatusInternalServerError, "could not reset stock")
+			return
+		}
+		labels = append(labels, label)
+		consumed[label] = sizeConsumed
+		totalConsumed += sizeConsumed
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		writeError(w, http.StatusInternalServerError, "could not reset stock")
+		return
+	}
+	rows.Close()
+	if len(labels) == 0 {
+		writeError(w, http.StatusConflict, "drop has no sizes")
+		return
+	}
+
+	sizes := distributeAvailableStock(labels, consumed, req.Stock)
+	for _, size := range sizes {
+		if _, err := tx.Exec(ctx, `
+			UPDATE drop_sizes SET stock = $1 WHERE drop_id = $2 AND label = $3
+		`, size.Baseline, dropID, size.Label); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not reset stock")
+			return
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE drops SET total_stock = $1 WHERE id = $2`, req.Stock+totalConsumed, dropID); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not reset stock")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not reset stock")
+		return
+	}
+
+	if err := replaceStockInRedis(ctx, h.redis, dropID, req.Stock, sizes); err != nil {
+		h.logger.ErrorContext(ctx, "Redis stock reset failed", slog.String("drop", dropID), slog.Any("err", err))
+		writeError(w, http.StatusServiceUnavailable, "stock saved; Redis synchronization failed")
+		return
+	}
+
+	responseSizes := make([]SizeInfo, 0, len(sizes))
+	for _, size := range sizes {
+		responseSizes = append(responseSizes, SizeInfo{Label: size.Label, Stock: int64(size.Available)})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"stock": req.Stock,
+		"sizes": responseSizes,
+	})
 }
 
 // ─── GET /api/admin/orders ────────────────────────────────────────────────────
