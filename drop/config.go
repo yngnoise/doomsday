@@ -24,6 +24,8 @@ var insecureConfigValues = map[string]struct{}{
 func ValidateSecurityConfig() error {
 	jwt := strings.TrimSpace(os.Getenv("JWT_SECRET"))
 	admin := strings.TrimSpace(os.Getenv("ADMIN_PASSWORD"))
+	appEnv := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	corsOrigins := strings.TrimSpace(os.Getenv("CORS_ORIGINS"))
 
 	var problems []string
 	if err := validateSecret("JWT_SECRET", jwt, minJWTSecretLength); err != nil {
@@ -31,6 +33,15 @@ func ValidateSecurityConfig() error {
 	}
 	if err := validateSecret("ADMIN_PASSWORD", admin, minAdminPasswordLength); err != nil {
 		problems = append(problems, err.Error())
+	}
+	if appEnv == "production" && corsOrigins == "" {
+		problems = append(problems, "CORS_ORIGINS is required in production")
+	}
+	for _, origin := range strings.Split(corsOrigins, ",") {
+		if strings.TrimSpace(origin) == "*" {
+			problems = append(problems, "CORS_ORIGINS must not contain a wildcard")
+			break
+		}
 	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))

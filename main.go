@@ -71,7 +71,7 @@ func main() {
 	mux.HandleFunc("POST /api/auth/verify-otp", drop.WithCORS(otp.VerifyOTP))
 	mux.HandleFunc("GET /api/drops", drop.WithCORS(h.ListDrops))
 	mux.HandleFunc("GET /api/drops/{dropID}", drop.WithCORS(h.GetDrop))
-	mux.HandleFunc("GET /api/drops/{dropID}/events", hub.ServeSSE)
+	mux.HandleFunc("GET /api/drops/{dropID}/events", drop.WithCORS(hub.ServeSSE))
 
 	// Protected — requires verified user (not guest)
 	mux.HandleFunc("POST /api/reserve", drop.UserAuthMiddleware(h.ReserveItem))
