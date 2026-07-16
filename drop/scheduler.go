@@ -44,32 +44,72 @@ func (s *Scheduler) Start(ctx context.Context) {
 // restores their stock in Redis, broadcasts via SSE, and promotes the waitlist.
 func (s *Scheduler) processExpired(ctx context.Context) {
 	rows, err := s.db.Query(ctx, `
-		UPDATE reservations
-		SET status = 'expired'
+		SELECT id, drop_id, user_id, size
+		FROM reservations
 		WHERE status = 'pending' AND expires_at < NOW()
-		RETURNING drop_id
+		ORDER BY expires_at
+		LIMIT 500
 	`)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "expiry sweep failed", slog.Any("err", err))
 		return
 	}
-	defer rows.Close()
+	type expiredReservation struct {
+		id, dropID, userID, size string
+	}
+	var expired []expiredReservation
+	for rows.Next() {
+		var reservation expiredReservation
+		if err := rows.Scan(&reservation.id, &reservation.dropID, &reservation.userID, &reservation.size); err != nil {
+			s.logger.ErrorContext(ctx, "expiry row scan failed", slog.Any("err", err))
+			continue
+		}
+		expired = append(expired, reservation)
+	}
+	if err := rows.Err(); err != nil {
+		s.logger.ErrorContext(ctx, "expiry rows failed", slog.Any("err", err))
+	}
+	rows.Close()
 
 	counts := make(map[string]int64)
-	for rows.Next() {
-		var dropID string
-		if err := rows.Scan(&dropID); err == nil {
-			counts[dropID]++
+	latestStock := make(map[string]int64)
+	for _, reservation := range expired {
+		release, err := releaseReservationInRedis(
+			ctx,
+			s.redis,
+			reservation.dropID,
+			reservation.size,
+			reservation.userID,
+			reservation.id,
+		)
+		if err != nil {
+			s.logger.ErrorContext(ctx, "reservation release failed",
+				slog.String("reservation", reservation.id),
+				slog.String("drop", reservation.dropID),
+				slog.Any("err", err),
+			)
+			continue
+		}
+
+		if _, err := s.db.Exec(ctx, `
+			UPDATE reservations
+			SET status = 'expired'
+			WHERE id = $1 AND status = 'pending'
+		`, reservation.id); err != nil {
+			s.logger.ErrorContext(ctx, "reservation expiry status update failed",
+				slog.String("reservation", reservation.id),
+				slog.Any("err", err),
+			)
+		}
+
+		if release.Released {
+			counts[reservation.dropID]++
+			latestStock[reservation.dropID] = release.TotalStock
 		}
 	}
 
 	for dropID, n := range counts {
-		key := fmt.Sprintf("drop:%s:stock", dropID)
-		newStock, err := s.redis.IncrBy(ctx, key, n).Result()
-		if err != nil {
-			s.logger.ErrorContext(ctx, "stock restore failed", slog.String("drop", dropID), slog.Any("err", err))
-			continue
-		}
+		newStock := latestStock[dropID]
 		s.hub.Broadcast(dropID, newStock)
 		s.logger.InfoContext(ctx, "stock restored",
 			slog.String("drop", dropID),

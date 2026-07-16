@@ -46,6 +46,9 @@ if redis.call('HEXISTS', resv_key, user_id) == 1 then return -2 end
 local size_left = tonumber(redis.call('GET', size_key))
 if size_left == nil or size_left <= 0 then return -1 end
 
+local total_left = tonumber(redis.call('GET', total_key))
+if total_left == nil or total_left <= 0 then return -1 end
+
 redis.call('DECR', size_key)
 redis.call('DECR', total_key)
 redis.call('HSET', resv_key, user_id, resv_id)
@@ -367,16 +370,37 @@ func (h *Handler) ReserveItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.hub.Broadcast(req.DropID, totalLeft)
 	expiresAt := now.Add(10 * time.Minute)
+	if err := h.persistReservation(ctx, reservationID, req.DropID, req.ItemID, userID, req.Size, expiresAt); err != nil {
+		h.logger.ErrorContext(ctx, "reservation persistence failed",
+			slog.String("reservation", reservationID),
+			slog.Any("err", err),
+		)
 
-	go func() {
-		ctx2, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
-		if err := h.persistReservation(ctx2, reservationID, req.DropID, req.ItemID, userID, req.Size, expiresAt); err != nil {
-			h.logger.ErrorContext(ctx2, "persist failed", slog.String("id", reservationID), slog.Any("err", err))
+		release, releaseErr := releaseReservationInRedis(
+			rollbackCtx,
+			h.redis,
+			req.DropID,
+			req.Size,
+			userID,
+			reservationID,
+		)
+		if releaseErr != nil {
+			h.logger.ErrorContext(rollbackCtx, "reservation rollback failed",
+				slog.String("reservation", reservationID),
+				slog.Any("err", releaseErr),
+			)
+		} else if release.Released {
+			h.hub.Broadcast(req.DropID, release.TotalStock)
 		}
-	}()
+
+		writeError(w, http.StatusServiceUnavailable, "could not create reservation")
+		return
+	}
+
+	h.hub.Broadcast(req.DropID, totalLeft)
 
 	if req.Email != "" {
 		h.mailer.SendReservationConfirmation(ctx, req.Email, userID, d.Name, reservationID, expiresAt)
@@ -517,12 +541,18 @@ func (h *Handler) reserveInRedis(ctx context.Context, dropID, size, userID, rese
 }
 
 func (h *Handler) persistReservation(ctx context.Context, id, dropID, itemID, userID, size string, expiresAt time.Time) error {
-	_, err := h.db.Exec(ctx, `
+	result, err := h.db.Exec(ctx, `
 		INSERT INTO reservations (id, drop_id, item_id, user_id, size, status, expires_at, created_at)
 		VALUES ($1,$2,$3,$4,$5,'pending',$6,NOW())
 		ON CONFLICT (id) DO NOTHING
 	`, id, dropID, itemID, userID, size, expiresAt)
-	return err
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return fmt.Errorf("reservation %s was not inserted", id)
+	}
+	return nil
 }
 
 func (h *Handler) fetchDrop(ctx context.Context, dropID string) (*dropRecord, error) {
