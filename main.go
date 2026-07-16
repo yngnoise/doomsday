@@ -60,7 +60,7 @@ func main() {
 	}
 
 	admin := drop.NewAdminHandler(rdb, db, logger)
-	otp := drop.NewOTPHandler(db, mailer, logger)
+	otp := drop.NewOTPHandler(db, rdb, mailer, logger)
 
 	// ── Routes ─────────────────────────────────────────────────────────────
 	mux := http.NewServeMux()

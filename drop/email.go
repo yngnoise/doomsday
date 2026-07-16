@@ -396,27 +396,33 @@ func (m *Mailer) SendOrderConfirmation(ctx context.Context, to, name, itemName, 
 // WAITLIST PROMOTION
 // ─────────────────────────────────────────────────────────────────────────────
 
-func (m *Mailer) SendWaitlistPromotion(ctx context.Context, to, dropID, dropName string) {
-	go func() {
-		dropURL := fmt.Sprintf("%s/drops/%s", m.siteURL, dropID)
+func (m *Mailer) SendWaitlistPromotion(ctx context.Context, to, dropID, dropName string) error {
+	if !m.Enabled() {
+		err := fmt.Errorf("SMTP is not configured")
+		m.logger.WarnContext(ctx, "waitlist email not scheduled", slog.String("to", to), slog.Any("err", err))
+		return err
+	}
 
-		content := fmt.Sprintf(`
+	dropURL := fmt.Sprintf("%s/drops/%s", m.siteURL, dropID)
+
+	content := fmt.Sprintf(`
 <p style="font-family:'Courier New',Courier,monospace;font-size:11px;color:#71717a;letter-spacing:0.25em;text-transform:uppercase;margin:0 0 8px;">Waitlist</p>
 <p style="font-family:Impact,'Arial Black',Arial,sans-serif;font-size:48px;font-weight:900;color:#ffffff;line-height:0.95;margin:0 0 32px;">YOUR<br/>SLOT IS OPEN</p>
 <p style="font-family:'Courier New',Courier,monospace;font-size:13px;color:#a1a1aa;line-height:1.7;margin:0 0 24px;">
   A unit of <span style="color:#ffffff;font-weight:700;">%s</span> has become available.<br/>You are next in the queue.
 </p>
 %s%s%s`,
-			dropName,
-			emailAlert("This window is time-limited. The unit will be released to the next person if not claimed.", "#eab308"),
-			emailCTA("Claim Your Unit", dropURL),
-			emailDivider(),
-		)
+		dropName,
+		emailAlert("This window is time-limited. The unit will be released to the next person if not claimed.", "#eab308"),
+		emailCTA("Claim Your Unit", dropURL),
+		emailDivider(),
+	)
 
-		if err := m.send(context.Background(), to,
-			"Your waitlist slot is open — "+dropName,
-			emailBase("Waitlist Notification", content)); err != nil {
-			m.logger.Error("waitlist email failed", slog.String("to", to), slog.Any("err", err))
-		}
-	}()
+	if err := m.send(ctx, to,
+		"Your waitlist slot is open — "+dropName,
+		emailBase("Waitlist Notification", content)); err != nil {
+		m.logger.ErrorContext(ctx, "waitlist email failed", slog.String("to", to), slog.Any("err", err))
+		return err
+	}
+	return nil
 }
