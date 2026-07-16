@@ -45,10 +45,13 @@ powershell -ExecutionPolicy Bypass -File scripts/rotate-local-secrets.ps1
 # 3. OTP-таблица
 psql -f migrate_otp.sql
 
-# 4. Backend
+# 4. Orders table
+psql -f migrate_orders.sql
+
+# 5. Backend
 go run main.go
 
-# 5. Frontend
+# 6. Frontend
 npm install
 npm run dev
 ```

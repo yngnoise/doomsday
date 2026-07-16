@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -417,6 +418,29 @@ func (h *Handler) ReserveItem(w http.ResponseWriter, r *http.Request) {
 // POST /api/checkout/{reservationID}/complete
 // ─────────────────────────────────────────────────────────────────────────────
 
+type checkoutRequest struct {
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	Address string `json:"address"`
+}
+
+func (req *checkoutRequest) validate(verifiedEmail string) error {
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.Name = strings.TrimSpace(req.Name)
+	req.Address = strings.TrimSpace(req.Address)
+
+	if verifiedEmail == "" {
+		return errors.New("verified email required")
+	}
+	if req.Email != "" && !strings.EqualFold(req.Email, verifiedEmail) {
+		return errors.New("checkout email must match verified email")
+	}
+	if req.Name == "" || req.Address == "" {
+		return errors.New("name and address are required")
+	}
+	return nil
+}
+
 func (h *Handler) CompleteCheckout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reservationID := r.PathValue("reservationID")
@@ -426,51 +450,117 @@ func (h *Handler) CompleteCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Email   string `json:"email"`
-		Name    string `json:"name"`
-		Address string `json:"address"`
-	}
+	verifiedEmail := strings.ToLower(strings.TrimSpace(emailFromContext(ctx)))
+	var req checkoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if err := req.validate(verifiedEmail); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not complete order")
+		return
+	}
+	defer tx.Rollback(ctx)
 
 	var expiresAt time.Time
-	var dropID, itemID, size string
-	err := h.db.QueryRow(ctx, `
-		SELECT r.expires_at, r.drop_id, r.item_id, r.size
+	var dropID, itemID, size, status, dropName string
+	var priceCents int
+	err = tx.QueryRow(ctx, `
+		SELECT r.expires_at, r.drop_id, r.item_id, r.size, r.status,
+		       d.name, d.price_cents
 		FROM reservations r
-		WHERE r.id = $1 AND r.user_id = $2 AND r.status = 'pending'
-	`, reservationID, userID).Scan(&expiresAt, &dropID, &itemID, &size)
+		JOIN drops d ON d.id = r.drop_id
+		WHERE r.id = $1 AND r.user_id = $2
+		FOR UPDATE OF r
+	`, reservationID, userID).Scan(
+		&expiresAt,
+		&dropID,
+		&itemID,
+		&size,
+		&status,
+		&dropName,
+		&priceCents,
+	)
 
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "reservation not found or already used")
+		writeError(w, http.StatusNotFound, "reservation not found")
 		return
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if time.Now().After(expiresAt) {
+	if status == "completed" {
+		var existingOrderID, existingSize string
+		if err := tx.QueryRow(ctx, `
+			SELECT id, size FROM orders WHERE reservation_id = $1
+		`, reservationID).Scan(&existingOrderID, &existingSize); err != nil {
+			h.logger.ErrorContext(ctx, "completed reservation has no order",
+				slog.String("reservation", reservationID),
+				slog.Any("err", err),
+			)
+			writeError(w, http.StatusInternalServerError, "could not load completed order")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"order_id": existingOrderID,
+			"status":   "completed",
+			"size":     existingSize,
+		})
+		return
+	}
+	if status != "pending" || time.Now().After(expiresAt) {
 		writeError(w, http.StatusGone, "reservation expired")
 		return
 	}
 
 	orderID := "ORD-" + uuid.NewString()[:8]
-	if _, err := h.db.Exec(ctx, `UPDATE reservations SET status='completed' WHERE id=$1`, reservationID); err != nil {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO orders (
+			id, reservation_id, drop_id, item_id, user_id, size,
+			email, customer_name, address, amount_cents, status
+		)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'completed')
+	`,
+		orderID,
+		reservationID,
+		dropID,
+		itemID,
+		userID,
+		size,
+		verifiedEmail,
+		req.Name,
+		req.Address,
+		priceCents,
+	); err != nil {
+		h.logger.ErrorContext(ctx, "order persistence failed", slog.Any("err", err))
 		writeError(w, http.StatusInternalServerError, "could not complete order")
 		return
 	}
 
-	if req.Email != "" {
-		d, _ := h.fetchDrop(ctx, dropID)
-		priceCents := 0
-		if d != nil {
-			priceCents = d.PriceCents
-		}
-		h.mailer.SendOrderConfirmation(ctx, req.Email, req.Name, itemID, orderID, priceCents)
+	result, err := tx.Exec(ctx, `
+		UPDATE reservations
+		SET status = 'completed'
+		WHERE id = $1 AND status = 'pending'
+	`, reservationID)
+	if err != nil || result.RowsAffected() != 1 {
+		writeError(w, http.StatusInternalServerError, "could not complete order")
+		return
 	}
+
+	if err := tx.Commit(ctx); err != nil {
+		h.logger.ErrorContext(ctx, "order transaction commit failed", slog.Any("err", err))
+		writeError(w, http.StatusInternalServerError, "could not complete order")
+		return
+	}
+
+	h.mailer.SendOrderConfirmation(ctx, verifiedEmail, req.Name, dropName, orderID, priceCents)
 
 	h.logger.Info("order completed",
 		slog.String("order", orderID),
