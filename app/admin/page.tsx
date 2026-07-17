@@ -150,7 +150,6 @@ function LoginScreen({ onLogin }: { onLogin: (token: string) => void }) {
             {loading ? "Authenticating…" : "Enter →"}
           </button>
         </div>
-        <p className="text-xs font-mono text-zinc-700 text-center">Default password: doomsday-admin</p>
       </motion.div>
     </div>
   );
@@ -467,7 +466,7 @@ function OrdersTab({ orders, statusFilter, onStatusChange, onRefund }: {
         <table className="w-full text-xs font-mono">
           <thead>
             <tr className="border-b border-zinc-800">
-              {["Reservation","Drop","User","Reservation","Payment","Order","Action"].map((h) => (
+              {["Reservation ID","Drop","User","Reservation Status","Payment","Order","Action"].map((h) => (
                 <th key={h} className="text-left px-4 py-3 text-zinc-600 tracking-widest uppercase font-normal whitespace-nowrap">{h}</th>
               ))}
             </tr>

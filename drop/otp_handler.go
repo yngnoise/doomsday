@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -76,6 +77,9 @@ func (h *OTPHandler) RequestOTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not generate code")
 		return
+	}
+	if os.Getenv("APP_ENV") == "test" && os.Getenv("E2E_OTP_CODE") != "" {
+		code = os.Getenv("E2E_OTP_CODE")
 	}
 
 	expiresAt := time.Now().Add(10 * time.Minute)

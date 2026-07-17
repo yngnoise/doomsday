@@ -52,6 +52,17 @@ npm install
 npm run dev
 ```
 
+## End-to-end browser tests
+
+The Playwright suite starts the Go API and Next.js app, creates isolated drops through the admin API, and exercises OTP sign-in, reservation, simulated payment, retry, expiry, waitlist, confirmation, and refund flows.
+
+```bash
+npx playwright install chromium
+npm run test:e2e
+```
+
+The fixed OTP and reservation-expiry controls are available only when `APP_ENV=test`; they are not registered in production.
+
 ## Статус проекта
 
 Локальный MVP: основная механика (бронирование, антиоверселлинг, лист ожидания, OTP) реализована и работает. Нет: адаптивной вёрстки, интеграции с реальным платёжным провайдером, деплоя.

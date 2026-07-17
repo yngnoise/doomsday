@@ -68,4 +68,28 @@ func TestValidateSecurityConfig(t *testing.T) {
 			t.Fatalf("ValidateSecurityConfig() error = %v", err)
 		}
 	})
+
+	t.Run("allows a fixed OTP only in test mode", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", strings.Repeat("j", minJWTSecretLength))
+		t.Setenv("PAYMENT_WEBHOOK_SECRET", strings.Repeat("p", minJWTSecretLength))
+		t.Setenv("ADMIN_PASSWORD", strings.Repeat("a", minAdminPasswordLength))
+		t.Setenv("E2E_OTP_CODE", "424242")
+		t.Setenv("APP_ENV", "test")
+		if err := ValidateSecurityConfig(); err != nil {
+			t.Fatalf("ValidateSecurityConfig() error = %v", err)
+		}
+	})
+
+	t.Run("rejects a fixed OTP outside test mode", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", strings.Repeat("j", minJWTSecretLength))
+		t.Setenv("PAYMENT_WEBHOOK_SECRET", strings.Repeat("p", minJWTSecretLength))
+		t.Setenv("ADMIN_PASSWORD", strings.Repeat("a", minAdminPasswordLength))
+		t.Setenv("E2E_OTP_CODE", "424242")
+		t.Setenv("APP_ENV", "production")
+		t.Setenv("CORS_ORIGINS", "https://example.com")
+		err := ValidateSecurityConfig()
+		if err == nil || !strings.Contains(err.Error(), "only allowed") {
+			t.Fatalf("ValidateSecurityConfig() error = %v", err)
+		}
+	})
 }
