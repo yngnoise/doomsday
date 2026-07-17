@@ -1,0 +1,72 @@
+services:
+  - type: web
+    name: doomsday-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./deploy/Dockerfile.api
+    dockerContext: .
+    autoDeployTrigger: checksPass
+    healthCheckPath: /health/ready
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: doomsday-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: doomsday-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PAYMENT_WEBHOOK_SECRET
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: SITE_URL
+        value: https://doomsday-demo.invalid
+      - key: CORS_ORIGINS
+        value: https://doomsday-demo.invalid
+      - key: DEMO_MODE
+        value: "true"
+      - key: DEMO_OTP_CODE
+        value: "424242"
+      - key: DEMO_RESET_ON_START
+        value: "true"
+
+  - type: web
+    name: doomsday-web
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./deploy/Dockerfile.web
+    dockerContext: .
+    autoDeployTrigger: checksPass
+    healthCheckPath: /health
+    envVars:
+      - key: API_ORIGIN
+        fromService:
+          type: web
+          name: doomsday-api
+          property: hostport
+      - key: NEXT_PUBLIC_DROP_ID
+        value: demo-wraith-jacket
+
+  - type: keyvalue
+    name: doomsday-redis
+    plan: free
+    region: frankfurt
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru
+
+databases:
+  - name: doomsday-postgres
+    plan: free
+    region: frankfurt
+    databaseName: doomsday
+    user: doomsday
+    postgresMajorVersion: "16"
+    ipAllowList: []

@@ -141,6 +141,7 @@ export default function AuthModal({ open, onSuccess, onClose }: AuthModalProps) 
   const [step,        setStep]        = useState<AuthStep>("email");
   const [email,       setEmail]       = useState("");
   const [maskedEmail, setMaskedEmail] = useState("");
+  const [demoCode,    setDemoCode]    = useState("");
   const [error,       setError]       = useState("");
   const [loading,     setLoading]     = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
@@ -148,7 +149,7 @@ export default function AuthModal({ open, onSuccess, onClose }: AuthModalProps) 
   // Reset on open
   useEffect(() => {
     if (open) {
-      setStep("email"); setEmail(""); setError(""); setLoading(false);
+      setStep("email"); setEmail(""); setDemoCode(""); setError(""); setLoading(false);
       setTimeout(() => emailRef.current?.focus(), 100);
     }
   }, [open]);
@@ -176,6 +177,7 @@ export default function AuthModal({ open, onSuccess, onClose }: AuthModalProps) 
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? "Failed to send code"); setLoading(false); return; }
       setMaskedEmail(data.masked_email);
+      setDemoCode(data.demo_code ?? "");
       setStep("code");
     } catch {
       setError("Network error — try again");
@@ -292,6 +294,13 @@ export default function AuthModal({ open, onSuccess, onClose }: AuthModalProps) 
                     <p className="text-xs font-mono text-zinc-500">Code sent to</p>
                     <p className="text-sm font-mono text-white">{maskedEmail}</p>
                   </div>
+
+                  {demoCode && (
+                    <div className="border border-zinc-700 bg-zinc-950 px-4 py-3">
+                      <p className="text-[10px] font-mono tracking-widest uppercase text-zinc-500">Portfolio demo code</p>
+                      <p className="mt-1 text-lg font-mono tracking-[0.35em] text-white">{demoCode}</p>
+                    </div>
+                  )}
 
                   <CodeInput onComplete={verifyOTP} disabled={loading} />
 

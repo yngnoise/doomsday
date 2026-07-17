@@ -92,4 +92,27 @@ func TestValidateSecurityConfig(t *testing.T) {
 			t.Fatalf("ValidateSecurityConfig() error = %v", err)
 		}
 	})
+
+	t.Run("allows a fixed OTP in demo mode", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", strings.Repeat("j", minJWTSecretLength))
+		t.Setenv("PAYMENT_WEBHOOK_SECRET", strings.Repeat("p", minJWTSecretLength))
+		t.Setenv("ADMIN_PASSWORD", strings.Repeat("a", minAdminPasswordLength))
+		t.Setenv("DEMO_MODE", "true")
+		t.Setenv("DEMO_OTP_CODE", "424242")
+		if err := ValidateSecurityConfig(); err != nil {
+			t.Fatalf("ValidateSecurityConfig() error = %v", err)
+		}
+	})
+
+	t.Run("requires a six digit OTP in demo mode", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", strings.Repeat("j", minJWTSecretLength))
+		t.Setenv("PAYMENT_WEBHOOK_SECRET", strings.Repeat("p", minJWTSecretLength))
+		t.Setenv("ADMIN_PASSWORD", strings.Repeat("a", minAdminPasswordLength))
+		t.Setenv("DEMO_MODE", "true")
+		t.Setenv("DEMO_OTP_CODE", "")
+		err := ValidateSecurityConfig()
+		if err == nil || !strings.Contains(err.Error(), "DEMO_OTP_CODE must contain exactly 6 digits") {
+			t.Fatalf("ValidateSecurityConfig() error = %v", err)
+		}
+	})
 }

@@ -25,6 +25,20 @@ func NewAdminHandler(rdb *redis.Client, db *pgxpool.Pool, logger *slog.Logger) *
 	return &AdminHandler{redis: rdb, db: db, logger: logger}
 }
 
+func (h *AdminHandler) ResetDemo(w http.ResponseWriter, r *http.Request) {
+	if err := ResetDemoData(r.Context(), h.db, h.redis); err != nil {
+		if errors.Is(err, ErrDemoResetDisabled) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "demo reset failed", slog.Any("err", err))
+		writeError(w, http.StatusInternalServerError, "demo reset failed")
+		return
+	}
+	h.logger.InfoContext(r.Context(), "demo data reset")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "reset", "drop_id": DemoDropID})
+}
+
 func adminPassword() string {
 	return os.Getenv("ADMIN_PASSWORD")
 }

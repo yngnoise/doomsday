@@ -18,3 +18,15 @@ func TestWaitlistPromotionFailsWhenSMTPIsDisabled(t *testing.T) {
 		t.Fatal("SendWaitlistPromotion() succeeded without SMTP configuration")
 	}
 }
+
+func TestDemoModeDisablesSMTP(t *testing.T) {
+	t.Setenv("DEMO_MODE", "true")
+	t.Setenv("SMTP_HOST", "smtp.example.com")
+	t.Setenv("SMTP_USER", "demo@example.com")
+	t.Setenv("SMTP_PASS", "secret")
+
+	mailer := NewMailer(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if mailer.Enabled() {
+		t.Fatal("NewMailer() enabled SMTP in demo mode")
+	}
+}

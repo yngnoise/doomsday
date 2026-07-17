@@ -21,6 +21,43 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func TestDemoResetIntegration(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	redisAddr := os.Getenv("TEST_REDIS_ADDR")
+	if databaseURL == "" || redisAddr == "" {
+		t.Skip("TEST_DATABASE_URL and TEST_REDIS_ADDR are required")
+	}
+	t.Setenv("DEMO_MODE", "true")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	db, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	defer rdb.Close()
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ResetDemoData(ctx, db, rdb); err != nil {
+			t.Fatalf("ResetDemoData() attempt %d error = %v", attempt+1, err)
+		}
+	}
+
+	var dropCount, stock int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*), COALESCE(MAX(total_stock), 0) FROM drops WHERE id=$1`, DemoDropID).Scan(&dropCount, &stock); err != nil {
+		t.Fatal(err)
+	}
+	if dropCount != 1 || stock != 120 {
+		t.Fatalf("demo drop count=%d stock=%d, want 1 and 120", dropCount, stock)
+	}
+	redisStock, err := rdb.Get(ctx, fmt.Sprintf("drop:%s:stock", DemoDropID)).Int()
+	if err != nil || redisStock != 120 {
+		t.Fatalf("demo Redis stock=%d err=%v, want 120", redisStock, err)
+	}
+}
+
 func TestReservationLifecycleIntegration(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	redisAddr := os.Getenv("TEST_REDIS_ADDR")

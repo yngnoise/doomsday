@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
@@ -20,7 +25,8 @@ func main() {
 		log.Fatalf("security configuration: %v", err)
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	// ── Redis ──────────────────────────────────────────────────────────────
@@ -28,11 +34,20 @@ func main() {
 	if redisURL == "" {
 		redisURL = "localhost:6379"
 	}
-	rdb := redis.NewClient(&redis.Options{Addr: redisURL})
+	redisOptions := &redis.Options{Addr: redisURL}
+	if strings.HasPrefix(redisURL, "redis://") || strings.HasPrefix(redisURL, "rediss://") {
+		var err error
+		redisOptions, err = redis.ParseURL(redisURL)
+		if err != nil {
+			log.Fatalf("redis URL: %v", err)
+		}
+	}
+	rdb := redis.NewClient(redisOptions)
+	defer rdb.Close()
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		log.Fatalf("redis: %v", err)
 	}
-	logger.Info("redis connected", slog.String("addr", redisURL))
+	logger.Info("redis connected", slog.String("addr", redisOptions.Addr))
 
 	// ── Postgres ───────────────────────────────────────────────────────────
 	dbURL := os.Getenv("DATABASE_URL")
@@ -46,7 +61,15 @@ func main() {
 	if err := db.Ping(ctx); err != nil {
 		log.Fatalf("postgres ping: %v", err)
 	}
+	defer db.Close()
 	logger.Info("postgres connected")
+
+	if strings.EqualFold(os.Getenv("DEMO_RESET_ON_START"), "true") {
+		if err := drop.ResetDemoData(ctx, db, rdb); err != nil {
+			log.Fatalf("demo reset: %v", err)
+		}
+		logger.Info("demo data reset on startup", slog.String("drop_id", drop.DemoDropID))
+	}
 
 	// ── Services ───────────────────────────────────────────────────────────
 	mailer := drop.NewMailer(logger)
@@ -64,6 +87,25 @@ func main() {
 
 	// ── Routes ─────────────────────────────────────────────────────────────
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
+		checkCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := db.Ping(checkCtx); err != nil {
+			http.Error(w, `{"status":"unavailable","dependency":"postgres"}`, http.StatusServiceUnavailable)
+			return
+		}
+		if err := rdb.Ping(checkCtx).Err(); err != nil {
+			http.Error(w, `{"status":"unavailable","dependency":"redis"}`, http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
+	})
 
 	// Public
 	mux.HandleFunc("GET /api/auth/guest", drop.WithCORS(h.GuestToken))
@@ -89,6 +131,9 @@ func main() {
 	mux.HandleFunc("PATCH /api/admin/drops/{dropID}/stock", drop.AdminAuthMiddleware(admin.ResetStock))
 	mux.HandleFunc("GET /api/admin/orders", drop.AdminAuthMiddleware(admin.ListOrders))
 	mux.HandleFunc("POST /api/admin/payments/{paymentID}/refund", drop.AdminAuthMiddleware(h.RefundPayment))
+	if drop.DemoModeEnabled() {
+		mux.HandleFunc("POST /api/admin/demo/reset", drop.AdminAuthMiddleware(admin.ResetDemo))
+	}
 	if os.Getenv("APP_ENV") == "test" {
 		mux.HandleFunc("POST /api/admin/test/reservations/{reservationID}/expire", drop.AdminAuthMiddleware(h.ExpireReservationForTest))
 	}
@@ -97,9 +142,31 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	logger.Info("Go API running", slog.String("addr", ":"+port))
+	server := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	logger.Info("Go API running", slog.String("addr", server.Addr))
 	if !mailer.Enabled() {
 		logger.Warn("email disabled — set RESEND_API_KEY in .env to enable")
 	}
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("HTTP server: %v", err)
+		}
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			logger.Error("HTTP shutdown failed", slog.Any("err", err))
+		}
+	}
 }
