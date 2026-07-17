@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1500" role="img" aria-labelledby="title description">
+  <title id="title">DOOMSDAY product image unavailable</title>
+  <desc id="description">A dark branded placeholder used when product photography is unavailable.</desc>
+  <defs>
+    <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60 0H0V60" fill="none" stroke="#27272a" stroke-width="2"/>
+    </pattern>
+    <radialGradient id="vignette" cx="50%" cy="44%" r="70%">
+      <stop offset="0" stop-color="#27272a" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#000" stop-opacity=".94"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="1500" fill="#09090b"/>
+  <rect width="1200" height="1500" fill="url(#grid)"/>
+  <rect width="1200" height="1500" fill="url(#vignette)"/>
+  <g fill="none" stroke="#52525b" stroke-width="4">
+    <path d="M90 150h130M90 150v130M1110 150H980M1110 150v130M90 1350h130M90 1350v-130M1110 1350H980M1110 1350v-130"/>
+    <circle cx="600" cy="690" r="250" stroke-dasharray="10 18"/>
+    <path d="M430 860 770 520M430 520l340 340"/>
+  </g>
+  <g fill="#fafafa" text-anchor="middle" font-family="Arial Black, Impact, sans-serif">
+    <text x="600" y="235" font-size="82" letter-spacing="16">DOOMSDAY</text>
+    <text x="600" y="1110" font-size="76" letter-spacing="10">IMAGE PENDING</text>
+  </g>
+  <g fill="#71717a" text-anchor="middle" font-family="Courier New, monospace" font-size="28" letter-spacing="8">
+    <text x="600" y="1180">PRODUCT ARCHIVE // NO SIGNAL</text>
+    <text x="600" y="1280">NO RESTOCKS · EVER</text>
+  </g>
+</svg>

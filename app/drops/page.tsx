@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   useMotionValue, animate,
 } from "framer-motion";
+import SafeProductImage from "@/components/SafeProductImage";
+import { getProductPreview } from "@/lib/productImages";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -55,13 +56,6 @@ const PHASE_META: Record<string, { label: string; color: string; dot: string }> 
   sold_out: { label: "SOLD OUT",  color: "text-zinc-500",   dot: "bg-zinc-600"   },
   ended:    { label: "ENDED",     color: "text-zinc-600",   dot: "bg-zinc-700"   },
 };
-
-// Photo for a drop — first photo in its /product/{id}/ folder
-// Convention: /product/{dropIndex}/1.jpg  (fallback to shared /product/1.jpg)
-// Adjust PHOTO_MAP below to match your actual files
-// First photo for each drop — used as preview on the archive page.
-// Convention: /public/product/{dropID}/1.jpg
-const getPhoto = (id: string) => `/product/${id}/1.jpg`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SCRAMBLE
@@ -426,8 +420,8 @@ export default function DropsArchive() {
               style={{ opacity: activePhoto === drop.id ? 1 : 0 }}>
 
               {/* Blurred bg */}
-              <Image
-                src={getPhoto(drop.id)}
+              <SafeProductImage
+                src={getProductPreview(drop.id)}
                 alt=""
                 aria-hidden
                 fill
@@ -437,8 +431,8 @@ export default function DropsArchive() {
               />
 
               {/* Main photo */}
-              <Image
-                src={getPhoto(drop.id)}
+              <SafeProductImage
+                src={getProductPreview(drop.id)}
                 alt={drop.name}
                 fill
                 className="object-contain object-center"

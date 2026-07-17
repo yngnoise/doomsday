@@ -2,8 +2,9 @@
 
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
+import SafeProductImage from "@/components/SafeProductImage";
+import { getProductPreview } from "@/lib/productImages";
 
 type SubmitState = "idle" | "loading" | "success" | "error" | "expired";
 interface FormData { email: string; name: string; address: string; }
@@ -51,7 +52,6 @@ function CheckoutContent() {
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [errorMsg,    setErrorMsg]    = useState("");
   const [orderID,     setOrderID]     = useState("");
-  const [imgError,    setImgError]    = useState(false);
 
   const set = (key: keyof FormData) => (v: string) => setForm(f => ({ ...f, [key]: v }));
 
@@ -118,7 +118,7 @@ function CheckoutContent() {
   }, [isValid, submitState, expired, reservationID, form, drop, dropID, router]);
 
   const price    = drop ? `$${Math.round(drop.price_cents / 100)}` : "—";
-  const photoSrc = dropID ? `/product/${dropID}/1.jpg` : null;
+  const photoSrc = dropID ? getProductPreview(dropID) : null;
 
   return (
     <div className="min-h-screen bg-black text-white" style={{ fontFamily: "'IBM Plex Mono','Courier New',monospace" }}>
@@ -272,9 +272,9 @@ function CheckoutContent() {
           <div className="border border-zinc-800 p-4 flex gap-4">
             {/* Product photo */}
             <div className="w-16 h-20 bg-zinc-900 border border-zinc-800 shrink-0 overflow-hidden">
-              {photoSrc && !imgError ? (
-                <Image src={photoSrc} alt={drop?.name ?? "Product"} width={64} height={80}
-                  className="w-full h-full object-cover" onError={() => setImgError(true)} />
+              {photoSrc ? (
+                <SafeProductImage src={photoSrc} alt={drop?.name ?? "Product"} width={64} height={80}
+                  className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <svg viewBox="0 0 100 130" className="w-10 opacity-30" fill="none">
