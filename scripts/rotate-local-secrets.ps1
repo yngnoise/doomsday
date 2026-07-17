@@ -17,8 +17,9 @@ function New-RandomSecret([int]$ByteCount) {
 }
 
 $replacements = [ordered]@{
-    JWT_SECRET     = New-RandomSecret 48
-    ADMIN_PASSWORD = New-RandomSecret 32
+    JWT_SECRET            = New-RandomSecret 48
+    PAYMENT_WEBHOOK_SECRET = New-RandomSecret 48
+    ADMIN_PASSWORD        = New-RandomSecret 32
 }
 
 if ($DisableSmtp) {
@@ -53,7 +54,7 @@ foreach ($entry in $replacements.GetEnumerator()) {
 $absolutePath = [System.IO.Path]::GetFullPath($EnvPath)
 [System.IO.File]::WriteAllLines($absolutePath, $updated, [System.Text.UTF8Encoding]::new($false))
 
-$changed = @('JWT_SECRET', 'ADMIN_PASSWORD')
+$changed = @('JWT_SECRET', 'PAYMENT_WEBHOOK_SECRET', 'ADMIN_PASSWORD')
 if ($DisableSmtp) {
     $changed += 'SMTP_PASS (disabled locally)'
 }

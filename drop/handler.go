@@ -61,20 +61,27 @@ return 0
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Handler struct {
-	redis  *redis.Client
-	db     *pgxpool.Pool
-	sha    string
-	hub    *Hub
-	mailer *Mailer
-	logger *slog.Logger
+	redis                *redis.Client
+	db                   *pgxpool.Pool
+	sha                  string
+	hub                  *Hub
+	mailer               *Mailer
+	logger               *slog.Logger
+	paymentWebhookSecret string
+	paymentGateway       paymentGateway
 }
 
-func NewHandler(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, hub *Hub, mailer *Mailer, logger *slog.Logger) (*Handler, error) {
+func NewHandler(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, hub *Hub, mailer *Mailer, logger *slog.Logger, paymentWebhookSecret ...string) (*Handler, error) {
 	sha, err := rdb.ScriptLoad(ctx, reserveScript).Result()
 	if err != nil {
 		return nil, fmt.Errorf("loading Lua script: %w", err)
 	}
-	h := &Handler{redis: rdb, db: db, sha: sha, hub: hub, mailer: mailer, logger: logger}
+	secret := "test-payment-webhook-secret-with-at-least-32-characters"
+	if len(paymentWebhookSecret) > 0 && paymentWebhookSecret[0] != "" {
+		secret = paymentWebhookSecret[0]
+	}
+	h := &Handler{redis: rdb, db: db, sha: sha, hub: hub, mailer: mailer, logger: logger, paymentWebhookSecret: secret}
+	h.paymentGateway = newSimulatedPaymentGateway(logger, h.deliverSimulatedEvent)
 	if err := h.initStock(ctx); err != nil {
 		logger.WarnContext(ctx, "stock init warning", slog.Any("err", err))
 	}

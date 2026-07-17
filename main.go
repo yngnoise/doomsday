@@ -54,7 +54,7 @@ func main() {
 	sched := drop.NewScheduler(db, rdb, hub, mailer, logger)
 	sched.Start(ctx)
 
-	h, err := drop.NewHandler(ctx, rdb, db, hub, mailer, logger)
+	h, err := drop.NewHandler(ctx, rdb, db, hub, mailer, logger, os.Getenv("PAYMENT_WEBHOOK_SECRET"))
 	if err != nil {
 		log.Fatalf("handler: %v", err)
 	}
@@ -75,7 +75,9 @@ func main() {
 
 	// Protected — requires verified user (not guest)
 	mux.HandleFunc("POST /api/reserve", drop.UserAuthMiddleware(h.ReserveItem))
-	mux.HandleFunc("POST /api/checkout/{reservationID}/complete", drop.UserAuthMiddleware(h.CompleteCheckout))
+	mux.HandleFunc("POST /api/checkout/{reservationID}/payments", drop.UserAuthMiddleware(h.CreatePayment))
+	mux.HandleFunc("GET /api/payments/{paymentID}", drop.UserAuthMiddleware(h.GetPayment))
+	mux.HandleFunc("POST /api/payments/webhook", h.PaymentWebhook)
 	mux.HandleFunc("POST /api/waitlist", drop.UserAuthMiddleware(h.JoinWaitlist))
 
 	// Admin
@@ -86,6 +88,7 @@ func main() {
 	mux.HandleFunc("PATCH /api/admin/drops/{dropID}/timer", drop.AdminAuthMiddleware(admin.ResetTimer))
 	mux.HandleFunc("PATCH /api/admin/drops/{dropID}/stock", drop.AdminAuthMiddleware(admin.ResetStock))
 	mux.HandleFunc("GET /api/admin/orders", drop.AdminAuthMiddleware(admin.ListOrders))
+	mux.HandleFunc("POST /api/admin/payments/{paymentID}/refund", drop.AdminAuthMiddleware(h.RefundPayment))
 
 	port := os.Getenv("PORT")
 	if port == "" {

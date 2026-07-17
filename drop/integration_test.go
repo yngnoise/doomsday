@@ -50,7 +50,8 @@ func TestReservationLifecycleIntegration(t *testing.T) {
 	concurrentDrop := "integration-concurrent-" + suffix
 	expiryDrop := "integration-expiry-" + suffix
 	checkoutDrop := "integration-checkout-" + suffix
-	dropIDs := []string{concurrentDrop, expiryDrop, checkoutDrop}
+	failureDrop := "integration-payment-retry-" + suffix
+	dropIDs := []string{concurrentDrop, expiryDrop, checkoutDrop, failureDrop}
 
 	for _, dropID := range dropIDs {
 		if _, err := db.Exec(ctx, `
@@ -68,7 +69,9 @@ func TestReservationLifecycleIntegration(t *testing.T) {
 
 	t.Cleanup(func() {
 		for _, dropID := range dropIDs {
+			_, _ = db.Exec(context.Background(), `DELETE FROM payment_events WHERE payment_id IN (SELECT p.id FROM payments p JOIN reservations r ON r.id=p.reservation_id WHERE r.drop_id=$1)`, dropID)
 			_, _ = db.Exec(context.Background(), `DELETE FROM orders WHERE drop_id = $1`, dropID)
+			_, _ = db.Exec(context.Background(), `DELETE FROM payments WHERE reservation_id IN (SELECT id FROM reservations WHERE drop_id=$1)`, dropID)
 			_, _ = db.Exec(context.Background(), `DELETE FROM reservations WHERE drop_id = $1`, dropID)
 			_, _ = db.Exec(context.Background(), `DELETE FROM drop_sizes WHERE drop_id = $1`, dropID)
 			_, _ = db.Exec(context.Background(), `DELETE FROM drops WHERE id = $1`, dropID)
@@ -162,7 +165,7 @@ func TestReservationLifecycleIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("concurrent checkout creates one order", func(t *testing.T) {
+	t.Run("concurrent payment creation and duplicate webhook create one order", func(t *testing.T) {
 		reservationID := "checkout-" + suffix
 		userID := "checkout-user-" + suffix
 		email := "checkout@example.com"
@@ -173,7 +176,7 @@ func TestReservationLifecycleIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		responses := make(chan map[string]string, 2)
+		responses := make(chan paymentResponse, 2)
 		start := make(chan struct{})
 		var wg sync.WaitGroup
 		for range 2 {
@@ -181,19 +184,19 @@ func TestReservationLifecycleIntegration(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				request := httptest.NewRequest(http.MethodPost, "/api/checkout/"+reservationID+"/complete", bytes.NewBufferString(`{"name":"Test User","address":"Test Address"}`))
+				request := httptest.NewRequest(http.MethodPost, "/api/checkout/"+reservationID+"/payments", bytes.NewBufferString(`{"name":"Test User","address":"Test Address","scenario":"success"}`))
 				request.SetPathValue("reservationID", reservationID)
 				requestCtx := context.WithValue(request.Context(), CtxUserID, userID)
 				requestCtx = context.WithValue(requestCtx, CtxEmail, email)
 				response := httptest.NewRecorder()
-				handler.CompleteCheckout(response, request.WithContext(requestCtx))
-				if response.Code != http.StatusOK {
-					responses <- map[string]string{"error": fmt.Sprintf("status %d: %s", response.Code, response.Body.String())}
+				handler.CreatePayment(response, request.WithContext(requestCtx))
+				if response.Code != http.StatusOK && response.Code != http.StatusAccepted {
+					t.Errorf("status %d: %s", response.Code, response.Body.String())
 					return
 				}
-				var payload map[string]string
+				var payload paymentResponse
 				if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
-					responses <- map[string]string{"error": err.Error()}
+					t.Error(err)
 					return
 				}
 				responses <- payload
@@ -203,16 +206,44 @@ func TestReservationLifecycleIntegration(t *testing.T) {
 		wg.Wait()
 		close(responses)
 
-		var orderID string
+		var paymentID string
 		for response := range responses {
-			if response["error"] != "" {
-				t.Fatal(response["error"])
+			if paymentID == "" {
+				paymentID = response.PaymentID
+			} else if response.PaymentID != paymentID {
+				t.Fatalf("payment IDs differ: %q and %q", paymentID, response.PaymentID)
 			}
-			if orderID == "" {
-				orderID = response["order_id"]
-			} else if response["order_id"] != orderID {
-				t.Fatalf("order IDs differ: %q and %q", orderID, response["order_id"])
+		}
+		if paymentID == "" {
+			t.Fatal("payment was not created")
+		}
+
+		deadline := time.Now().Add(4 * time.Second)
+		var paymentStatus string
+		for time.Now().Before(deadline) {
+			if err := db.QueryRow(ctx, `SELECT status FROM payments WHERE id=$1`, paymentID).Scan(&paymentStatus); err != nil {
+				t.Fatal(err)
 			}
+			if paymentStatus == "paid" {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if paymentStatus != "paid" {
+			t.Fatalf("payment status = %q, want paid", paymentStatus)
+		}
+
+		event := paymentEvent{ID: "duplicate-" + suffix, PaymentID: paymentID, Type: "payment.succeeded", OccurredAt: time.Now().UTC()}
+		body, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signature := signPaymentPayload(handler.paymentWebhookSecret, body)
+		if err := handler.processPaymentWebhook(ctx, body, signature); err != nil {
+			t.Fatal(err)
+		}
+		if err := handler.processPaymentWebhook(ctx, body, signature); err != nil {
+			t.Fatal(err)
 		}
 
 		var orders int
@@ -221,6 +252,90 @@ func TestReservationLifecycleIntegration(t *testing.T) {
 		}
 		if orders != 1 {
 			t.Fatalf("orders = %d, want 1", orders)
+		}
+		var duplicateEvents int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM payment_events WHERE id=$1`, event.ID).Scan(&duplicateEvents); err != nil {
+			t.Fatal(err)
+		}
+		if duplicateEvents != 1 {
+			t.Fatalf("duplicate events = %d, want 1", duplicateEvents)
+		}
+	})
+
+	t.Run("failed payment keeps the reservation available for a successful retry", func(t *testing.T) {
+		reservationID := "payment-retry-" + suffix
+		userID := "payment-retry-user-" + suffix
+		email := "payment-retry@example.com"
+		if _, err := db.Exec(ctx, `
+			INSERT INTO reservations (id, drop_id, item_id, user_id, size, status, expires_at)
+			VALUES ($1, $2, 'item-1', $3, 'M', 'pending', NOW() + INTERVAL '10 minutes')
+		`, reservationID, failureDrop, userID); err != nil {
+			t.Fatal(err)
+		}
+
+		createPayment := func(scenario string) paymentResponse {
+			request := httptest.NewRequest(http.MethodPost, "/api/checkout/"+reservationID+"/payments",
+				bytes.NewBufferString(fmt.Sprintf(`{"name":"Test User","address":"Test Address","scenario":%q}`, scenario)))
+			request.SetPathValue("reservationID", reservationID)
+			requestCtx := context.WithValue(request.Context(), CtxUserID, userID)
+			requestCtx = context.WithValue(requestCtx, CtxEmail, email)
+			response := httptest.NewRecorder()
+			handler.CreatePayment(response, request.WithContext(requestCtx))
+			if response.Code != http.StatusAccepted {
+				t.Fatalf("create %s payment: status %d: %s", scenario, response.Code, response.Body.String())
+			}
+			var payment paymentResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &payment); err != nil {
+				t.Fatal(err)
+			}
+			return payment
+		}
+
+		waitForStatus := func(paymentID, wanted string) {
+			deadline := time.Now().Add(4 * time.Second)
+			var status string
+			for time.Now().Before(deadline) {
+				if err := db.QueryRow(ctx, `SELECT status FROM payments WHERE id=$1`, paymentID).Scan(&status); err != nil {
+					t.Fatal(err)
+				}
+				if status == wanted {
+					return
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			t.Fatalf("payment %s status = %q, want %q", paymentID, status, wanted)
+		}
+
+		declined := createPayment("declined")
+		waitForStatus(declined.PaymentID, "failed")
+
+		var reservationStatus string
+		var orderCount int
+		if err := db.QueryRow(ctx, `SELECT status FROM reservations WHERE id=$1`, reservationID).Scan(&reservationStatus); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE reservation_id=$1`, reservationID).Scan(&orderCount); err != nil {
+			t.Fatal(err)
+		}
+		if reservationStatus != "pending" || orderCount != 0 {
+			t.Fatalf("after decline: reservation=%q orders=%d", reservationStatus, orderCount)
+		}
+
+		succeeded := createPayment("success")
+		if succeeded.PaymentID == declined.PaymentID {
+			t.Fatal("retry reused a failed payment attempt")
+		}
+		waitForStatus(succeeded.PaymentID, "paid")
+
+		var paymentCount int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE reservation_id=$1`, reservationID).Scan(&paymentCount); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE reservation_id=$1`, reservationID).Scan(&orderCount); err != nil {
+			t.Fatal(err)
+		}
+		if paymentCount != 2 || orderCount != 1 {
+			t.Fatalf("payments=%d orders=%d, want 2 and 1", paymentCount, orderCount)
 		}
 	})
 }

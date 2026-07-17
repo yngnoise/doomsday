@@ -38,6 +38,10 @@ interface Order {
   drop_name: string;
   user_id: string;
   status: "pending" | "completed" | "expired";
+  payment_id?: string;
+  payment_status?: "pending" | "processing" | "paid" | "failed" | "refunded";
+  order_id?: string;
+  order_status?: "completed" | "refunded";
   expires_at: string;
   created_at: string;
 }
@@ -431,8 +435,9 @@ function DropsTab({ drops, token, onRefresh }: { drops: Drop[]; token: string; o
 // ─────────────────────────────────────────────────────────────────────────────
 // ORDERS TAB
 // ─────────────────────────────────────────────────────────────────────────────
-function OrdersTab({ orders, statusFilter, onStatusChange }: {
+function OrdersTab({ orders, statusFilter, onStatusChange, onRefund }: {
   orders: Order[]; statusFilter: string; onStatusChange: (s: string) => void;
+  onRefund: (paymentID: string) => Promise<void>;
 }) {
   const STATUS_COLORS: Record<string, string> = {
     completed: "text-green-400 border-green-800",
@@ -462,7 +467,7 @@ function OrdersTab({ orders, statusFilter, onStatusChange }: {
         <table className="w-full text-xs font-mono">
           <thead>
             <tr className="border-b border-zinc-800">
-              {["Order ID","Drop","User","Status","Created","Expires"].map((h) => (
+              {["Reservation","Drop","User","Reservation","Payment","Order","Action"].map((h) => (
                 <th key={h} className="text-left px-4 py-3 text-zinc-600 tracking-widest uppercase font-normal whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -478,12 +483,20 @@ function OrdersTab({ orders, statusFilter, onStatusChange }: {
                     {o.status}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-zinc-500 whitespace-nowrap">{fmtDate(o.created_at)}</td>
-                <td className="px-4 py-3 text-zinc-600 whitespace-nowrap">{fmtDate(o.expires_at)}</td>
+                <td className="px-4 py-3 text-zinc-400 whitespace-nowrap">{o.payment_status ?? "—"}</td>
+                <td className="px-4 py-3 text-zinc-500 whitespace-nowrap">{o.order_status ?? "—"}</td>
+                <td className="px-4 py-3">
+                  {o.payment_id && o.payment_status === "paid" ? (
+                    <button onClick={() => onRefund(o.payment_id!)}
+                      className="border border-zinc-700 px-2 py-1 text-zinc-400 hover:border-red-800 hover:text-red-400 uppercase tracking-widest">
+                      Refund
+                    </button>
+                  ) : <span className="text-zinc-800">—</span>}
+                </td>
               </tr>
             ))}
             {orders.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-zinc-700">No orders found.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-zinc-700">No orders found.</td></tr>
             )}
           </tbody>
         </table>
@@ -531,7 +544,7 @@ export default function AdminPage() {
     setToken(null);
   }, []);
 
-  const { get } = useApi(token, logout);
+  const { get, post } = useApi(token, logout);
 
   // Persist token in sessionStorage so refresh doesn't log out
   useEffect(() => {
@@ -551,6 +564,12 @@ export default function AdminPage() {
     const qs = statusFilter ? `?status=${statusFilter}` : "";
     get(`/api/admin/orders${qs}`).then(d => setOrders(Array.isArray(d) ? d : []));
   }, [get, statusFilter]);
+
+  const refundPayment = useCallback(async (paymentID: string) => {
+    if (!window.confirm("Refund this simulated payment?")) return;
+    await post(`/api/admin/payments/${paymentID}/refund`, {});
+    await Promise.all([loadOrders(), loadStats()]);
+  }, [post, loadOrders, loadStats]);
 
   useEffect(() => { if (!tokenLoaded || !token) return; loadStats(); loadDrops(); }, [tokenLoaded, token]);
   useEffect(() => { if (!tokenLoaded || !token) return; loadOrders(); }, [tokenLoaded, token, statusFilter]);
@@ -599,7 +618,7 @@ export default function AdminPage() {
             transition={{ duration: 0.15 }}>
             {tab === "overview" && <OverviewTab stats={stats} onRefresh={loadStats} />}
             {tab === "drops"    && <DropsTab drops={drops} token={token} onRefresh={() => { loadDrops(); loadStats(); }} />}
-            {tab === "orders"   && <OrdersTab orders={orders} statusFilter={statusFilter} onStatusChange={setStatusFilter} />}
+            {tab === "orders"   && <OrdersTab orders={orders} statusFilter={statusFilter} onStatusChange={setStatusFilter} onRefund={refundPayment} />}
           </motion.div>
         </AnimatePresence>
       </main>

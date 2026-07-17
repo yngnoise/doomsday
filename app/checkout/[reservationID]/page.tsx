@@ -7,8 +7,15 @@ import SafeProductImage from "@/components/SafeProductImage";
 import { getProductPreview } from "@/lib/productImages";
 
 type SubmitState = "idle" | "loading" | "success" | "error" | "expired";
+type PaymentScenario = "success" | "declined" | "cancelled" | "timeout";
 interface FormData { email: string; name: string; address: string; }
 interface DropInfo { id: string; name: string; price_cents: number; }
+interface PaymentResult {
+  payment_id: string;
+  status: "pending" | "processing" | "paid" | "failed" | "refunded";
+  failure_code?: string;
+  order_id?: string;
+}
 
 function useCountdown(target: Date | null) {
   const calc = useCallback(() => {
@@ -52,6 +59,8 @@ function CheckoutContent() {
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [errorMsg,    setErrorMsg]    = useState("");
   const [orderID,     setOrderID]     = useState("");
+  const [paymentID,   setPaymentID]   = useState("");
+  const [scenario,    setScenario]    = useState<PaymentScenario>("success");
 
   const set = (key: keyof FormData) => (v: string) => setForm(f => ({ ...f, [key]: v }));
 
@@ -92,30 +101,56 @@ function CheckoutContent() {
     setSubmitState("loading");
     const token = localStorage.getItem("dmsdy_user_token") ?? "";
     try {
-      const res = await fetch(`/api/checkout/${reservationID}/complete`, {
+      const res = await fetch(`/api/checkout/${reservationID}/payments`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email: form.email, name: form.name, address: form.address }),
+        body: JSON.stringify({ email: form.email, name: form.name, address: form.address, scenario }),
       });
-      const body = await res.json();
-      if (res.ok) {
-        localStorage.removeItem(`dmsdy_checkout_${reservationID}`);
-        localStorage.removeItem(`dmsdy_reservation_${dropID}`);
-        setOrderID(body.order_id);
-        setSubmitState("success");
-        setTimeout(() => router.push(
-          `/confirmation?order=${body.order_id}&item=${encodeURIComponent(drop?.name ?? "")}`
-        ), 2_000);
+      const body = await res.json() as PaymentResult & { error?: string };
+      if (res.status === 410) { setSubmitState("expired"); return; }
+      if (!res.ok) {
+        setErrorMsg(body.error ?? "Something went wrong");
+        setSubmitState("error");
         return;
       }
-      if (res.status === 410) { setSubmitState("expired"); return; }
-      setErrorMsg(body.error ?? "Something went wrong");
+
+      setPaymentID(body.payment_id);
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        const statusResponse = await fetch(`/api/payments/${body.payment_id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!statusResponse.ok) continue;
+        const payment = await statusResponse.json() as PaymentResult;
+        if (payment.status === "paid" && payment.order_id) {
+          localStorage.removeItem(`dmsdy_checkout_${reservationID}`);
+          localStorage.removeItem(`dmsdy_reservation_${dropID}`);
+          setOrderID(payment.order_id);
+          setSubmitState("success");
+          setTimeout(() => router.push(
+            `/confirmation?order=${payment.order_id}&item=${encodeURIComponent(drop?.name ?? "")}`
+          ), 2_000);
+          return;
+        }
+        if (payment.status === "failed") {
+          const messages: Record<string, string> = {
+            declined: "The simulated card was declined. Choose another scenario and retry.",
+            cancelled: "The simulated payment was cancelled.",
+            timed_out: "The simulated gateway timed out. No order was created.",
+            reservation_expired: "The reservation expired before payment confirmation.",
+          };
+          setErrorMsg(messages[payment.failure_code ?? ""] ?? "The simulated payment failed.");
+          setSubmitState("error");
+          return;
+        }
+      }
+      setErrorMsg("The simulator did not respond in time. Check the payment status and retry.");
       setSubmitState("error");
     } catch {
-      setErrorMsg("Network error — try again");
+      setErrorMsg("Network error - try again");
       setSubmitState("error");
     }
-  }, [isValid, submitState, expired, reservationID, form, drop, dropID, router]);
+  }, [isValid, submitState, expired, reservationID, form, scenario, drop, dropID, router]);
 
   const price    = drop ? `$${Math.round(drop.price_cents / 100)}` : "—";
   const photoSrc = dropID ? getProductPreview(dropID) : null;
@@ -214,10 +249,28 @@ function CheckoutContent() {
               03 — Payment
             </h2>
             <div className="border border-zinc-800 bg-zinc-950 p-4 space-y-1">
-              <p className="text-xs font-mono text-zinc-500 tracking-widest uppercase">Demo Mode</p>
+              <p className="text-xs font-mono text-zinc-500 tracking-widest uppercase">Payment Gateway Simulator</p>
               <p className="text-xs font-mono text-zinc-600 leading-relaxed">
-                This is a portfolio project. No real payment is processed.
+                Select an outcome to exercise the asynchronous payment flow. No card data is collected and no real money is charged.
               </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                ["success", "Approved"],
+                ["declined", "Declined"],
+                ["cancelled", "Cancelled"],
+                ["timeout", "Timeout"],
+              ] as [PaymentScenario, string][]).map(([value, label]) => (
+                <button key={value} type="button" onClick={() => setScenario(value)}
+                  aria-pressed={scenario === value}
+                  className={`h-10 border text-xs font-mono tracking-widest uppercase transition-colors ${
+                    scenario === value
+                      ? "border-white bg-white text-black"
+                      : "border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
+                  }`}>
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -243,7 +296,7 @@ function CheckoutContent() {
                   <motion.span animate={{ rotate: 360 }} transition={{ duration: 0.9, repeat: Infinity, ease: "linear" }}
                     className="w-4 h-4 border-2 border-zinc-400 border-t-transparent rounded-full" />
                 )}
-                {submitState === "loading" ? "Processing…" : `Complete Order — ${price}`}
+                {submitState === "loading" ? "Waiting for signed event…" : `Simulate Payment — ${price}`}
               </span>
             </motion.button>
 
@@ -257,8 +310,11 @@ function CheckoutContent() {
             </AnimatePresence>
 
             <p className="text-xs font-mono text-zinc-700 text-center tracking-wide">
-              Portfolio demo · No real charges · All sales final
+              Portfolio demo · No card data · No real charges
             </p>
+            {paymentID && submitState !== "success" && (
+              <p className="text-xs font-mono text-zinc-800 text-center truncate">Payment {paymentID}</p>
+            )}
           </div>
         </motion.div>
 
