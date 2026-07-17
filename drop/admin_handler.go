@@ -390,14 +390,18 @@ func (h *AdminHandler) ResetStock(w http.ResponseWriter, r *http.Request) {
 // ─── GET /api/admin/orders ────────────────────────────────────────────────────
 
 type OrderRow struct {
-	ID        string    `json:"id"`
-	DropID    string    `json:"drop_id"`
-	DropName  string    `json:"drop_name"`
-	UserID    string    `json:"user_id"`
-	Size      string    `json:"size"`
-	Status    string    `json:"status"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	DropID        string    `json:"drop_id"`
+	DropName      string    `json:"drop_name"`
+	UserID        string    `json:"user_id"`
+	Size          string    `json:"size"`
+	Status        string    `json:"status"`
+	PaymentID     *string   `json:"payment_id,omitempty"`
+	PaymentStatus *string   `json:"payment_status,omitempty"`
+	OrderID       *string   `json:"order_id,omitempty"`
+	OrderStatus   *string   `json:"order_status,omitempty"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 func (h *AdminHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
@@ -407,9 +411,15 @@ func (h *AdminHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 
 	query := `
 		SELECT r.id, r.drop_id, COALESCE(d.name,'?'), r.user_id, r.size,
-		       r.status, r.expires_at, r.created_at
+		       r.status, p.id, p.status, o.id, o.status, r.expires_at, r.created_at
 		FROM reservations r
 		LEFT JOIN drops d ON d.id = r.drop_id
+		LEFT JOIN LATERAL (
+			SELECT id, status FROM payments
+			WHERE reservation_id = r.id
+			ORDER BY created_at DESC LIMIT 1
+		) p ON TRUE
+		LEFT JOIN orders o ON o.reservation_id = r.id
 		WHERE 1=1
 	`
 	args := []any{}
@@ -436,7 +446,8 @@ func (h *AdminHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var o OrderRow
 		if err := rows.Scan(&o.ID, &o.DropID, &o.DropName, &o.UserID, &o.Size,
-			&o.Status, &o.ExpiresAt, &o.CreatedAt); err != nil {
+			&o.Status, &o.PaymentID, &o.PaymentStatus, &o.OrderID, &o.OrderStatus,
+			&o.ExpiresAt, &o.CreatedAt); err != nil {
 			continue
 		}
 		result = append(result, o)

@@ -1,5 +1,7 @@
 # Doomsday
 
+> The public path from local MVP to portfolio case study is tracked in [ROADMAP.md](ROADMAP.md).
+
 MVP платформы лимитированных дропов одежды (модель в духе Supreme/Nike SNKRS): таймер старта/окончания продажи, ограниченный сток по размерам, бронирование товара с автоматическим сбросом при неоплате.
 
 Архитектура и разработка (включая AI-ассистированное кодирование) — [@yngnoise](https://github.com/yngnoise). Локальный MVP, не задеплоен, без адаптивной вёрстки.
