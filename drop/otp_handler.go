@@ -81,6 +81,9 @@ func (h *OTPHandler) RequestOTP(w http.ResponseWriter, r *http.Request) {
 	if os.Getenv("APP_ENV") == "test" && os.Getenv("E2E_OTP_CODE") != "" {
 		code = os.Getenv("E2E_OTP_CODE")
 	}
+	if DemoModeEnabled() {
+		code = os.Getenv("DEMO_OTP_CODE")
+	}
 
 	expiresAt := time.Now().Add(10 * time.Minute)
 	_, err = h.db.Exec(ctx, `
@@ -91,15 +94,21 @@ func (h *OTPHandler) RequestOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send email
-	h.mailer.SendOTP(ctx, req.Email, code)
+	// Demo codes are returned to the browser; no email worker is started.
+	if !DemoModeEnabled() {
+		h.mailer.SendOTP(ctx, req.Email, code)
+	}
 	h.logger.Info("OTP issued", slog.String("email", req.Email))
 
 	// Return masked email so frontend can display "Sent to a***@gmail.com"
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"masked_email": maskEmail(req.Email),
 		"expires_in":   600, // seconds
-	})
+	}
+	if DemoModeEnabled() {
+		response["demo_code"] = code
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

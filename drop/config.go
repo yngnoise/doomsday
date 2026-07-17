@@ -30,6 +30,8 @@ func ValidateSecurityConfig() error {
 	admin := strings.TrimSpace(os.Getenv("ADMIN_PASSWORD"))
 	appEnv := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
 	e2eOTPCode := strings.TrimSpace(os.Getenv("E2E_OTP_CODE"))
+	demoOTPCode := strings.TrimSpace(os.Getenv("DEMO_OTP_CODE"))
+	demoMode := strings.EqualFold(strings.TrimSpace(os.Getenv("DEMO_MODE")), "true")
 	corsOrigins := strings.TrimSpace(os.Getenv("CORS_ORIGINS"))
 
 	var problems []string
@@ -53,6 +55,12 @@ func ValidateSecurityConfig() error {
 	}
 	if e2eOTPCode != "" && (len(e2eOTPCode) != 6 || strings.Trim(e2eOTPCode, "0123456789") != "") {
 		problems = append(problems, "E2E_OTP_CODE must contain exactly 6 digits")
+	}
+	if demoOTPCode != "" && !demoMode {
+		problems = append(problems, "DEMO_OTP_CODE is only allowed when DEMO_MODE=true")
+	}
+	if demoMode && (len(demoOTPCode) != 6 || strings.Trim(demoOTPCode, "0123456789") != "") {
+		problems = append(problems, "DEMO_OTP_CODE must contain exactly 6 digits when DEMO_MODE=true")
 	}
 	for _, origin := range strings.Split(corsOrigins, ",") {
 		if strings.TrimSpace(origin) == "*" {

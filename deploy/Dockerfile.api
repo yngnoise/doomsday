@@ -1,0 +1,18 @@
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/doomsday .
+
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates postgresql-client \
+    && addgroup -S app \
+    && adduser -S -G app app
+WORKDIR /app
+COPY --from=build /out/doomsday /app/doomsday
+COPY migrations /app/migrations
+COPY deploy/backend-entrypoint.sh /app/deploy/backend-entrypoint.sh
+USER app
+EXPOSE 8080
+CMD ["sh", "/app/deploy/backend-entrypoint.sh"]

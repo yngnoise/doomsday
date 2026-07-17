@@ -36,7 +36,7 @@ func NewMailer(logger *slog.Logger) *Mailer {
 	if siteURL == "" {
 		siteURL = "http://localhost:3000"
 	}
-	return &Mailer{
+	mailer := &Mailer{
 		host:    os.Getenv("SMTP_HOST"),
 		port:    os.Getenv("SMTP_PORT"),
 		user:    os.Getenv("SMTP_USER"),
@@ -45,6 +45,12 @@ func NewMailer(logger *slog.Logger) *Mailer {
 		siteURL: siteURL,
 		logger:  logger,
 	}
+	if DemoModeEnabled() {
+		mailer.host = ""
+		mailer.user = ""
+		mailer.pass = ""
+	}
+	return mailer
 }
 
 func (m *Mailer) Enabled() bool {
