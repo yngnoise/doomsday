@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef, use } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import {
   motion, AnimatePresence,
   useMotionValue, useTransform, animate,
 } from "framer-motion";
 import AuthModal from "@/components/AuthModal";
+import SafeProductImage from "@/components/SafeProductImage";
+import { getProductImages } from "@/lib/productImages";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -40,10 +41,6 @@ type WaitlistState =
   | { status: "joined"; position: number } | { status: "error" };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PHOTO CONFIG — put images in /public/product/1.jpg, 2.jpg …
-// ─────────────────────────────────────────────────────────────────────────────
-// Photos are now resolved per drop via getPhotos() in the root component
-
 // ─────────────────────────────────────────────────────────────────────────────
 // GLOBAL STYLES
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,7 +151,7 @@ function PhotoViewer({ photos, phase, price, edition }: {
           <div key={`bg-${src}`}
             className="absolute inset-0 transition-opacity duration-300"
             style={{ opacity: i === active ? 1 : 0 }}>
-            <Image
+            <SafeProductImage
               src={src}
               alt=""
               aria-hidden
@@ -184,7 +181,7 @@ function PhotoViewer({ photos, phase, price, edition }: {
             <div key={src}
               className="absolute inset-0"
               style={{ opacity: i === active ? 1 : 0 }}>
-              <Image
+              <SafeProductImage
                 src={src}
                 alt={`Product photo ${i + 1}`}
                 fill
@@ -258,7 +255,7 @@ function PhotoViewer({ photos, phase, price, edition }: {
                   ? "border-white w-20 opacity-100"
                   : "border-zinc-700 w-14 opacity-40 hover:opacity-70 hover:border-zinc-500"
               }`}>
-              <Image src={src} alt={`Thumb ${i + 1}`} fill
+              <SafeProductImage src={src} alt={`Thumb ${i + 1}`} fill
                 className="object-cover object-center" sizes="80px" />
             </button>
           ))}
@@ -847,28 +844,11 @@ function Ticker({ items }: { items: string[] }) {
 const ITEM_ID = "jacket-001";
 const SPECS   = ["Waxed Ventile® Shell","YKK® Aquaguard Zip","D-ring Utility"];
 
-// Photos per drop — put files in /public/product/{dropID}/1.jpg, 2.jpg …
-// Set how many photos each drop has. Unknown drops default to 4.
-const PHOTOS_BY_DROP: Record<string, number> = {
-  "dmsdy-ss25-001": 4,
-  "dmsdy-ss25-002": 4,
-  "dmsdy-ss25-003": 4,
-  "dmsdy-ss25-004": 4,
-  "dmsdy-ss25-005": 4,
-  "dmsdy-fw25-001": 4,
-};
-const DEFAULT_PHOTO_COUNT = 4;
-
-function getPhotos(dropID: string): string[] {
-  const count = PHOTOS_BY_DROP[dropID] ?? DEFAULT_PHOTO_COUNT;
-  return Array.from({ length: count }, (_, i) => `/product/${dropID}/${i + 1}.jpg`);
-}
-
 export default function DoomsdayDrop({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const DROP_ID = id;
   const router  = useRouter();
-  const PHOTOS  = getPhotos(DROP_ID);
+  const PHOTOS  = getProductImages(DROP_ID);
   const dropNum = DROP_ID.split("-").pop()?.toUpperCase() ?? "001";
   const EDITION = `SS/25 — COLLECTION ${dropNum}`;
 
