@@ -89,6 +89,9 @@ func main() {
 	mux.HandleFunc("PATCH /api/admin/drops/{dropID}/stock", drop.AdminAuthMiddleware(admin.ResetStock))
 	mux.HandleFunc("GET /api/admin/orders", drop.AdminAuthMiddleware(admin.ListOrders))
 	mux.HandleFunc("POST /api/admin/payments/{paymentID}/refund", drop.AdminAuthMiddleware(h.RefundPayment))
+	if os.Getenv("APP_ENV") == "test" {
+		mux.HandleFunc("POST /api/admin/test/reservations/{reservationID}/expire", drop.AdminAuthMiddleware(h.ExpireReservationForTest))
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {

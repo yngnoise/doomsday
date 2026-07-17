@@ -32,7 +32,7 @@ Progress is tracked in the umbrella issue [#27](https://github.com/yngnoise/doom
 
 ## Phase 3 — Reliability and evidence
 
-- [ ] [Add end-to-end coverage for critical user journeys](https://github.com/yngnoise/doomsday/issues/21)
+- [x] [Add end-to-end coverage for critical user journeys](https://github.com/yngnoise/doomsday/issues/21)
   - Exercise OTP sign-in, reservation, payment, confirmation, expiry, waitlist, and refund
   - Run the complete stack with PostgreSQL and Redis in CI
   - Retain traces and screenshots for failed scenarios

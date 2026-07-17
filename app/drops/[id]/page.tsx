@@ -743,6 +743,7 @@ function PurchaseButton({ phase, reserveState, onPress, price, sizeSelected }: {
 
   return (
     <motion.button
+      data-testid="purchase-button"
       onClick={onPress}
       disabled={disabled}
       onMouseEnter={() => { if (!disabled) scramble(); }}

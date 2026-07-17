@@ -29,6 +29,7 @@ func ValidateSecurityConfig() error {
 	paymentWebhook := strings.TrimSpace(os.Getenv("PAYMENT_WEBHOOK_SECRET"))
 	admin := strings.TrimSpace(os.Getenv("ADMIN_PASSWORD"))
 	appEnv := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	e2eOTPCode := strings.TrimSpace(os.Getenv("E2E_OTP_CODE"))
 	corsOrigins := strings.TrimSpace(os.Getenv("CORS_ORIGINS"))
 
 	var problems []string
@@ -46,6 +47,12 @@ func ValidateSecurityConfig() error {
 	}
 	if appEnv == "production" && corsOrigins == "" {
 		problems = append(problems, "CORS_ORIGINS is required in production")
+	}
+	if e2eOTPCode != "" && appEnv != "test" {
+		problems = append(problems, "E2E_OTP_CODE is only allowed when APP_ENV=test")
+	}
+	if e2eOTPCode != "" && (len(e2eOTPCode) != 6 || strings.Trim(e2eOTPCode, "0123456789") != "") {
+		problems = append(problems, "E2E_OTP_CODE must contain exactly 6 digits")
 	}
 	for _, origin := range strings.Split(corsOrigins, ",") {
 		if strings.TrimSpace(origin) == "*" {

@@ -55,6 +55,7 @@ function CheckoutContent() {
   const expired       = expiresAt ? Date.now() > expiresAt.getTime() : false;
 
   const [form,        setForm]        = useState<FormData>({ email: "", name: "", address: "" });
+  const [formLoaded,  setFormLoaded]  = useState(false);
   const [drop,        setDrop]        = useState<DropInfo | null>(null);
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [errorMsg,    setErrorMsg]    = useState("");
@@ -81,17 +82,19 @@ function CheckoutContent() {
       try {
         const p = JSON.parse(saved) as Partial<FormData>;
         setForm({ email: p.email ?? authEmail, name: p.name ?? "", address: p.address ?? "" });
+        setFormLoaded(true);
         return;
       } catch {}
     }
     if (authEmail) setForm(f => ({ ...f, email: authEmail }));
+    setFormLoaded(true);
   }, [reservationID]);
 
   // ── Persist form on every change ──────────────────────────────────────────
   useEffect(() => {
-    if (!reservationID) return;
+    if (!reservationID || !formLoaded) return;
     localStorage.setItem(`dmsdy_checkout_${reservationID}`, JSON.stringify(form));
-  }, [form, reservationID]);
+  }, [form, formLoaded, reservationID]);
 
   const isValid = form.email.includes("@") && form.name.trim().length > 0 && form.address.trim().length > 0;
 
