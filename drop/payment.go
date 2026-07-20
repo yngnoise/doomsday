@@ -27,23 +27,6 @@ var validPaymentScenarios = map[string]struct{}{
 	"timeout":   {},
 }
 
-type paymentGateway interface {
-	Start(paymentID, scenario string)
-}
-
-type simulatedPaymentGateway struct {
-	logger  *slog.Logger
-	deliver func(context.Context, string, string) error
-}
-
-func newSimulatedPaymentGateway(logger *slog.Logger, deliver func(context.Context, string, string) error) paymentGateway {
-	return &simulatedPaymentGateway{logger: logger, deliver: deliver}
-}
-
-func (g *simulatedPaymentGateway) Start(paymentID, scenario string) {
-	go g.run(paymentID, scenario)
-}
-
 type createPaymentRequest struct {
 	checkoutRequest
 	Scenario string `json:"scenario"`
@@ -152,12 +135,18 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create payment")
 		return
 	}
+	if err := enqueueOutboxJob(ctx, tx, outboxJobPaymentSimulation, "payment-simulation:"+paymentID,
+		paymentSimulationPayload{PaymentID: paymentID, Scenario: req.Scenario},
+	); err != nil {
+		h.logger.ErrorContext(ctx, "payment simulation enqueue failed", slog.Any("err", err))
+		writeError(w, http.StatusInternalServerError, "could not create payment")
+		return
+	}
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create payment")
 		return
 	}
 
-	h.paymentGateway.Start(paymentID, req.Scenario)
 	writeJSON(w, http.StatusAccepted, paymentResponse{
 		PaymentID: paymentID, Status: "pending", Scenario: req.Scenario,
 		AmountCents: priceCents, Currency: "USD",
@@ -224,35 +213,8 @@ func (h *Handler) GetPayment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (g *simulatedPaymentGateway) run(paymentID, scenario string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	time.Sleep(250 * time.Millisecond)
-	if err := g.deliver(ctx, paymentID, "payment.processing"); err != nil {
-		g.logger.ErrorContext(ctx, "simulated payment processing event failed", slog.String("payment", paymentID), slog.Any("err", err))
-		return
-	}
-
-	delay := 450 * time.Millisecond
-	eventType := "payment.succeeded"
-	switch scenario {
-	case "declined":
-		eventType = "payment.declined"
-	case "cancelled":
-		eventType = "payment.cancelled"
-	case "timeout":
-		eventType = "payment.timed_out"
-		delay = 1500 * time.Millisecond
-	}
-	time.Sleep(delay)
-	if err := g.deliver(ctx, paymentID, eventType); err != nil {
-		g.logger.ErrorContext(ctx, "simulated payment final event failed", slog.String("payment", paymentID), slog.Any("err", err))
-	}
-}
-
 func (h *Handler) deliverSimulatedEvent(ctx context.Context, paymentID, eventType string) error {
-	event := paymentEvent{ID: "EVT-" + uuid.NewString(), PaymentID: paymentID, Type: eventType, OccurredAt: time.Now().UTC()}
+	event := paymentEvent{ID: "EVT-" + paymentID + "-" + eventType, PaymentID: paymentID, Type: eventType, OccurredAt: time.Now().UTC()}
 	body, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -342,7 +304,6 @@ func (h *Handler) processPaymentWebhook(ctx context.Context, body []byte, signat
 	}
 
 	var orderID string
-	var sendConfirmation bool
 	switch event.Type {
 	case "payment.processing":
 		if status == "pending" {
@@ -374,7 +335,11 @@ func (h *Handler) processPaymentWebhook(ctx context.Context, body []byte, signat
 		if _, err = tx.Exec(ctx, `UPDATE payments SET status='paid', failure_code=NULL, updated_at=NOW() WHERE id=$1`, event.PaymentID); err != nil {
 			return err
 		}
-		sendConfirmation = true
+		if err := enqueueOutboxJob(ctx, tx, outboxJobOrderEmail, "order-confirmation:"+orderID, orderEmailPayload{
+			To: email, Name: customerName, ItemName: dropName, OrderID: orderID, PriceCents: amountCents,
+		}); err != nil {
+			return err
+		}
 	case "payment.declined", "payment.cancelled", "payment.timed_out":
 		if status == "pending" || status == "processing" {
 			failureCode := strings.TrimPrefix(event.Type, "payment.")
@@ -398,9 +363,6 @@ func (h *Handler) processPaymentWebhook(ctx context.Context, body []byte, signat
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
-	}
-	if sendConfirmation {
-		h.mailer.SendOrderConfirmation(ctx, email, customerName, dropName, orderID, amountCents)
 	}
 	return nil
 }
