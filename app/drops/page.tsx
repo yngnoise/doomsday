@@ -27,8 +27,9 @@ interface DropItem {
 // GLOBAL STYLES
 // ─────────────────────────────────────────────────────────────────────────────
 const GLOBAL_CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&display=swap');
-  * { cursor: none !important; }
+  @media (hover: hover) and (pointer: fine) {
+    * { cursor: none !important; }
+  }
   .crt-overlay {
     pointer-events: none; position: fixed; inset: 0; z-index: 9990;
   }
@@ -167,16 +168,17 @@ function DropRow({ drop, index, isHovered, onHover, onLeave, onClick }: {
   const { display, scramble } = useScramble(drop.name);
 
   return (
-    <motion.div
+    <motion.button
+      type="button"
       onMouseEnter={() => { onHover(); scramble(); }}
       onMouseLeave={onLeave}
+      onFocus={() => { onHover(); scramble(); }}
+      onBlur={onLeave}
       onClick={onClick}
-      animate={{ opacity: isHovered ? 1 : 0.35 }}
-      transition={{ duration: 0.15 }}
-      className="group border-b border-zinc-800 last:border-0"
+      className="group block w-full border-b border-zinc-800 text-left last:border-0"
       style={{ cursor: "none" }}
     >
-      <div className="flex items-center gap-6 px-8 py-5 relative">
+      <div className="flex items-center gap-3 sm:gap-6 px-4 sm:px-8 py-5 relative">
 
         {/* Index number */}
         <span className="text-xs font-mono text-zinc-600 w-8 flex-shrink-0 tabular-nums">
@@ -211,7 +213,7 @@ function DropRow({ drop, index, isHovered, onHover, onLeave, onClick }: {
         </span>
 
         {/* Status */}
-        <div className="flex items-center gap-2 flex-shrink-0 w-28 justify-end">
+        <div className="flex items-center gap-2 flex-shrink-0 sm:w-28 justify-end">
           {drop.phase === "live" && (
             <motion.div animate={{ opacity: [1, 0.2, 1] }} transition={{ duration: 1, repeat: Infinity }}
               className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${phase.dot}`} />
@@ -225,7 +227,7 @@ function DropRow({ drop, index, isHovered, onHover, onLeave, onClick }: {
         <motion.span
           animate={{ opacity: isHovered ? 1 : 0, x: isHovered ? 0 : -6 }}
           transition={{ duration: 0.15 }}
-          className="text-white text-sm font-mono flex-shrink-0 ml-2"
+          className="hidden sm:block text-white text-sm font-mono flex-shrink-0 ml-2"
         >
           →
         </motion.span>
@@ -238,7 +240,7 @@ function DropRow({ drop, index, isHovered, onHover, onLeave, onClick }: {
           transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         />
       </div>
-    </motion.div>
+    </motion.button>
   );
 }
 
@@ -301,8 +303,8 @@ export default function DropsArchive() {
   const hoveredDrop = hovered ? drops.find(d => d.id === hovered) : null;
 
   return (
-    <div className="h-screen w-full bg-black text-white flex flex-col overflow-hidden"
-      style={{ fontFamily: "'IBM Plex Mono','Courier New',monospace" }}>
+    <div className="min-h-dvh lg:h-dvh w-full bg-black text-white flex flex-col overflow-x-hidden lg:overflow-hidden"
+      style={{ fontFamily: "var(--font-geist-mono), 'Courier New', monospace" }}>
 
       <style>{GLOBAL_CSS}</style>
       <CustomCursor />
@@ -313,15 +315,15 @@ export default function DropsArchive() {
         style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`, backgroundSize: "160px 160px" }} />
 
       {/* HEADER */}
-      <header className="relative z-10 flex-shrink-0 flex items-center justify-between px-6 md:px-8 py-4 border-b border-zinc-800">
+      <header className="relative z-10 flex-shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 md:px-8 py-4 border-b border-zinc-800">
         <div className="flex items-center gap-4">
-          <button onClick={() => router.push("/drop")}
+          <button onClick={() => router.push("/drops")}
             className="text-xl font-black text-white hover:text-zinc-300 transition-colors"
             style={{ fontFamily: "'Impact','Arial Black',sans-serif", letterSpacing: "0.04em" }}>
             DOOMSDAY™
           </button>
-          <span className="text-zinc-700">|</span>
-          <span className="text-xs font-mono tracking-widest uppercase text-zinc-500">All Drops</span>
+          <span aria-hidden className="text-zinc-700">|</span>
+          <span className="hidden sm:inline text-xs font-mono tracking-widest uppercase text-zinc-500">All Drops</span>
         </div>
         <div className="flex items-center gap-3">
           {live.length > 0 && (
@@ -333,24 +335,24 @@ export default function DropsArchive() {
               </span>
             </div>
           )}
-          <span className="text-xs font-mono text-zinc-600">{drops.length} drops total</span>
+          <span className="hidden sm:inline text-xs font-mono text-zinc-600">{drops.length} drops total</span>
         </div>
       </header>
 
       {/* BODY */}
-      <div className="flex-1 min-h-0 flex">
+      <main className="flex-1 lg:min-h-0 flex">
 
         {/* ── LEFT — index ─────────────────────────────────────────── */}
-        <div className="relative z-10 flex flex-col w-full lg:w-[52%] xl:w-[48%] border-r border-zinc-800 overflow-hidden">
+        <div className="relative z-10 flex flex-col w-full lg:w-[52%] xl:w-[48%] border-r border-zinc-800 lg:overflow-hidden">
 
           {/* Title block */}
-          <div className="flex-shrink-0 px-8 pt-8 pb-6 border-b border-zinc-800">
+          <div className="flex-shrink-0 px-4 sm:px-8 pt-7 sm:pt-8 pb-6 border-b border-zinc-800">
             <p className="text-xs font-mono tracking-widest uppercase text-zinc-600 mb-2">
               DOOMSDAY™ DROP
             </p>
             <h1
               onMouseEnter={titleScramble}
-              className="text-6xl md:text-7xl font-black text-white leading-none uppercase"
+              className="text-5xl sm:text-6xl md:text-7xl font-black text-white leading-none uppercase"
               style={{ fontFamily: "'Impact','Arial Black',sans-serif", letterSpacing: "-0.02em" }}>
               {titleDisplay}
             </h1>
@@ -360,35 +362,24 @@ export default function DropsArchive() {
           </div>
 
           {/* Drop list */}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 lg:overflow-y-auto">
             {loading ? (
-              <div className="px-8 py-12">
-                <motion.p animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.5, repeat: Infinity }}
-                  className="text-xs font-mono tracking-widest uppercase text-zinc-600">
-                  Loading drops…
-                </motion.p>
+              <div aria-live="polite" aria-busy="true">
+                <span className="sr-only">Loading drops</span>
+                {Array.from({ length: 6 }, (_, index) => (
+                  <div aria-hidden key={index} className="h-[81px] border-b border-zinc-800 px-4 sm:px-8 py-5">
+                    <div className="h-6 w-3/4 bg-zinc-900 animate-pulse" />
+                  </div>
+                ))}
               </div>
             ) : ordered.length === 0 ? (
               <div className="px-8 py-12">
                 <p className="text-xs font-mono text-zinc-600">No drops found.</p>
               </div>
             ) : (
-              <motion.div
-                initial="hidden"
-                animate="visible"
-                variants={{
-                  hidden: {},
-                  visible: { transition: { staggerChildren: 0.06 } },
-                }}
-              >
+              <div>
                 {ordered.map((drop, i) => (
-                  <motion.div
-                    key={drop.id}
-                    variants={{
-                      hidden:  { opacity: 0, x: -16 },
-                      visible: { opacity: 1, x: 0, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] } },
-                    }}
-                  >
+                  <div key={drop.id}>
                     <DropRow
                       drop={drop}
                       index={i}
@@ -397,14 +388,14 @@ export default function DropsArchive() {
                       onLeave={handleLeave}
                       onClick={() => router.push(`/drops/${drop.id}`)}
                     />
-                  </motion.div>
+                  </div>
                 ))}
-              </motion.div>
+              </div>
             )}
           </div>
 
           {/* Footer */}
-          <div className="flex-shrink-0 px-8 py-4 border-t border-zinc-800 flex items-center justify-between">
+          <div className="flex-shrink-0 px-4 sm:px-8 py-4 border-t border-zinc-800 flex flex-wrap gap-2 items-center justify-between">
             <span className="text-xs font-mono tracking-widest uppercase text-zinc-700">© DOOMSDAY MMXXV</span>
             <span className="text-xs font-mono tracking-widest uppercase text-zinc-700">No restocks · Ever.</span>
           </div>
@@ -492,7 +483,7 @@ export default function DropsArchive() {
             <div key={cls} className={`absolute w-6 h-6 ${cls} border-white/15 z-[5]`} />
           ))}
         </div>
-      </div>
+      </main>
     </div>
   );
 }

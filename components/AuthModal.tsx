@@ -72,13 +72,15 @@ function CodeInput({ onComplete, disabled }: {
   };
 
   return (
-    <div className="flex gap-3 justify-center">
+    <div role="group" aria-label="Six digit access code" className="flex gap-1.5 sm:gap-3 justify-center">
       {digits.map((d, i) => (
         <motion.input
           key={i}
           ref={el => { refs.current[i] = el; }}
           type="text"
           inputMode="numeric"
+          autoComplete={i === 0 ? "one-time-code" : "off"}
+          aria-label={`Access code digit ${i + 1}`}
           maxLength={6}
           value={d}
           disabled={disabled}
@@ -89,8 +91,8 @@ function CodeInput({ onComplete, disabled }: {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: i * 0.05, duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
           className={[
-            "w-11 h-14 text-center text-2xl font-black text-white bg-black",
-            "border focus:outline-none tabular-nums transition-colors duration-100",
+            "w-9 sm:w-11 h-14 text-center text-2xl font-black text-white bg-black",
+            "border tabular-nums transition-colors duration-100",
             "font-mono disabled:opacity-40",
             d !== ""
               ? "border-white"
@@ -145,6 +147,8 @@ export default function AuthModal({ open, onSuccess, onClose }: AuthModalProps) 
   const [error,       setError]       = useState("");
   const [loading,     setLoading]     = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   // Reset on open
   useEffect(() => {
@@ -152,6 +156,35 @@ export default function AuthModal({ open, onSuccess, onClose }: AuthModalProps) 
       setStep("email"); setEmail(""); setDemoCode(""); setError(""); setLoading(false);
       setTimeout(() => emailRef.current?.focus(), 100);
     }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", trapFocus);
+    return () => {
+      document.removeEventListener("keydown", trapFocus);
+      document.body.style.overflow = previousOverflow;
+      previousFocusRef.current?.focus();
+    };
   }, [open]);
 
   // Close on Escape
@@ -210,21 +243,25 @@ export default function AuthModal({ open, onSuccess, onClose }: AuthModalProps) 
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-50 flex items-center justify-center p-6"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
           style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)" }}
           onClick={onClose}
         >
           <motion.div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="auth-dialog-title"
             initial={{ opacity: 0, y: 24, scale: 0.97 }}
             animate={{ opacity: 1, y: 0,  scale: 1    }}
             exit={{    opacity: 0, y: 16, scale: 0.97 }}
             transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-            className="w-full max-w-sm border border-zinc-700 bg-black p-8 space-y-6 relative"
+            className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto border border-zinc-700 bg-black p-6 sm:p-8 space-y-6 relative"
             onClick={e => e.stopPropagation()}
-            style={{ fontFamily: "'IBM Plex Mono','Courier New',monospace" }}
+            style={{ fontFamily: "var(--font-geist-mono), 'Courier New', monospace" }}
           >
             {/* Close */}
-            <button onClick={onClose}
+            <button onClick={onClose} aria-label="Close sign-in dialog"
               className="absolute top-4 right-4 text-zinc-600 hover:text-white text-lg leading-none transition-colors">
               ✕
             </button>
@@ -236,7 +273,7 @@ export default function AuthModal({ open, onSuccess, onClose }: AuthModalProps) 
               </p>
               <AnimatePresence mode="wait">
                 {step === "email" ? (
-                  <motion.h2 key="h-email"
+                  <motion.h2 id="auth-dialog-title" key="h-email"
                     initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 8 }}
                     transition={{ duration: 0.2 }}
                     className="text-3xl font-black text-white uppercase leading-none"
@@ -244,7 +281,7 @@ export default function AuthModal({ open, onSuccess, onClose }: AuthModalProps) 
                     Request Access
                   </motion.h2>
                 ) : (
-                  <motion.h2 key="h-code"
+                  <motion.h2 id="auth-dialog-title" key="h-code"
                     initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 8 }}
                     transition={{ duration: 0.2 }}
                     className="text-3xl font-black text-white uppercase leading-none"
@@ -267,11 +304,14 @@ export default function AuthModal({ open, onSuccess, onClose }: AuthModalProps) 
                   <input
                     ref={emailRef}
                     type="email"
+                    name="email"
+                    aria-label="Email address"
+                    autoComplete="email"
                     value={email}
                     onChange={e => { setEmail(e.target.value); setError(""); }}
                     onKeyDown={e => e.key === "Enter" && requestOTP()}
                     placeholder="your@email.com"
-                    className="w-full h-12 bg-zinc-950 border border-zinc-700 text-white text-sm font-mono px-4 focus:outline-none focus:border-zinc-400 placeholder:text-zinc-700 tracking-wide"
+                    className="w-full h-12 bg-zinc-950 border border-zinc-700 text-white text-sm font-mono px-4 focus:border-zinc-400 placeholder:text-zinc-700 tracking-wide"
                   />
                   <button
                     onClick={() => requestOTP()}
@@ -327,7 +367,7 @@ export default function AuthModal({ open, onSuccess, onClose }: AuthModalProps) 
                 <motion.p
                   initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
                   exit={{ opacity: 0, height: 0 }}
-                  className="text-xs font-mono text-red-400 tracking-widest overflow-hidden">
+                  role="alert" aria-live="assertive" className="text-xs font-mono text-red-400 tracking-widest overflow-hidden">
                   ✕ {error}
                 </motion.p>
               )}

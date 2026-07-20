@@ -21,7 +21,7 @@ Progress is tracked in the umbrella issue [#27](https://github.com/yngnoise/doom
   - Seed and automatically restore demo data
   - Keep secrets in the hosting environment
   - Disable real email and external payment side effects
-- [ ] [Make the storefront responsive and accessible](https://github.com/yngnoise/doomsday/issues/20)
+- [x] [Make the storefront responsive and accessible](https://github.com/yngnoise/doomsday/issues/20)
   - Support mobile, tablet, and desktop layouts
   - Improve keyboard navigation, focus states, semantics, and contrast
   - Cover loading, empty, error, reconnecting, and disabled states

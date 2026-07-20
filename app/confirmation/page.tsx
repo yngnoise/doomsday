@@ -17,8 +17,7 @@ function ConfirmationContent() {
     .toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col" style={{ fontFamily: "'IBM Plex Mono','Courier New',monospace" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&display=swap');`}</style>
+    <div className="min-h-screen bg-black text-white flex flex-col" style={{ fontFamily: "var(--font-geist-mono), 'Courier New', monospace" }}>
       <div aria-hidden className="fixed inset-0 pointer-events-none opacity-[0.03]"
         style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`, backgroundSize: "160px 160px" }} />
 
@@ -43,7 +42,7 @@ function ConfirmationContent() {
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs font-mono tracking-widest uppercase text-zinc-500 mb-1">Order ID</p>
-                <p className="text-lg font-black text-white" style={{ fontFamily: "'Impact','Arial Black',sans-serif" }}>{orderID.toUpperCase()}</p>
+                <p className="text-lg font-black text-white break-all" style={{ fontFamily: "'Impact','Arial Black',sans-serif" }}>{orderID.toUpperCase()}</p>
               </div>
               <div className="border border-zinc-700 bg-black px-2.5 py-1">
                 <span className="text-xs font-mono tracking-widest uppercase text-zinc-400">Confirmed</span>
@@ -61,15 +60,15 @@ function ConfirmationContent() {
           </div>
 
           <p className="text-sm font-mono text-zinc-500 leading-relaxed">
-            A confirmation has been dispatched. Your piece ships within 48 hours. Track via the DHL reference in your email.
+            Your simulated order is confirmed. Save this receipt to keep the order reference for the portfolio walkthrough.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-3">
-            <button onClick={() => router.push("/drops")}
+            <button type="button" onClick={() => router.push("/drops")}
               className="flex-1 h-12 border border-zinc-700 text-xs tracking-widest uppercase font-mono text-zinc-400 hover:border-zinc-500 hover:text-zinc-300 transition-colors">
               Back to Drop
             </button>
-            <button onClick={() => window.print()}
+            <button type="button" onClick={() => window.print()}
               className="flex-1 h-12 border border-white text-xs tracking-widest uppercase font-mono text-white hover:bg-white hover:text-black transition-colors">
               Save Receipt
             </button>
@@ -78,7 +77,7 @@ function ConfirmationContent() {
         </motion.div>
       </main>
 
-      <footer className="border-t border-zinc-900 px-6 py-4 flex items-center justify-between">
+      <footer className="border-t border-zinc-900 px-4 sm:px-6 py-4 flex flex-wrap gap-2 items-center justify-between">
         <span className="text-xs font-mono tracking-widest uppercase text-zinc-700">© DOOMSDAY MMXXV</span>
         <span className="text-xs font-mono tracking-widest uppercase text-zinc-700">End of Days Sale System v3.0</span>
       </footer>

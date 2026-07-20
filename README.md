@@ -63,6 +63,8 @@ npm run test:e2e
 
 The fixed OTP and reservation-expiry controls are available only when `APP_ENV=test`; they are not registered in production.
 
+Responsive and accessibility verification is documented in [docs/accessibility.md](docs/accessibility.md). Run the desktop and mobile WCAG checks with `npm run test:a11y`.
+
 ## Safe portfolio demo
 
 The repository includes production container images, a local four-service demo stack, and a Render Blueprint. The demo uses simulated payments, disables outbound email, exposes its OTP in the sign-in UI, and recreates disposable data on each API start.
