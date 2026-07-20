@@ -24,6 +24,11 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "mobile-accessibility",
+      testMatch: /accessibility\.spec\.ts/,
+      use: { ...devices["Pixel 5"] },
+    },
   ],
   webServer: [
     {

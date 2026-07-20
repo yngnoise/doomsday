@@ -45,8 +45,9 @@ type WaitlistState =
 // GLOBAL STYLES
 // ─────────────────────────────────────────────────────────────────────────────
 const GLOBAL_CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&display=swap');
-  * { cursor: none !important; }
+  @media (hover: hover) and (pointer: fine) {
+    * { cursor: none !important; }
+  }
   .crt-overlay {
     pointer-events: none; position: fixed; inset: 0; z-index: 9990;
   }
@@ -275,9 +276,9 @@ function SizeSelector({ sizes, selected, onSelect }: {
   sizes: SizeInfo[]; selected: string | null; onSelect: (s: string) => void;
 }) {
   return (
-    <div className="space-y-2">
+    <div role="group" aria-labelledby="size-selector-label" className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-mono tracking-widest uppercase text-zinc-400">Size</span>
+        <span id="size-selector-label" className="text-xs font-mono tracking-widest uppercase text-zinc-400">Size</span>
         {!selected && (
           <motion.span
             initial={{ opacity: 0 }} animate={{ opacity: 1 }}
@@ -298,9 +299,12 @@ function SizeSelector({ sizes, selected, onSelect }: {
 
           return (
             <button
+              type="button"
               key={label}
               onClick={() => !soldOut && onSelect(label)}
               disabled={soldOut}
+              aria-pressed={isActive}
+              aria-label={`${label}, ${soldOut ? "sold out" : `${stock} remaining`}`}
               className={[
                 "relative h-10 min-w-[3rem] px-3 text-xs font-mono tracking-widest uppercase border transition-all duration-100",
                 soldOut
@@ -313,7 +317,7 @@ function SizeSelector({ sizes, selected, onSelect }: {
               {label}
               {/* Low stock dot */}
               {low && !soldOut && (
-                <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500" />
+                <span aria-hidden className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500" />
               )}
               {/* Sold out slash */}
               {soldOut && (
@@ -329,7 +333,7 @@ function SizeSelector({ sizes, selected, onSelect }: {
       {/* Low stock warning */}
       <AnimatePresence>
         {selected && sizes.find(s => s.label === selected)?.stock === 1 && (
-          <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+          <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} role="status" aria-live="polite"
             className="text-xs font-mono text-red-400 tracking-widest uppercase">
             ⚠ Last unit in {selected}
           </motion.p>
@@ -369,7 +373,7 @@ function BootSequence({ onDone }: { onDone: () => void }) {
   return (
     <motion.div animate={exiting ? { opacity: 0 } : { opacity: 1 }} transition={{ duration: 0.4 }}
       className="fixed inset-0 z-50 bg-black flex flex-col justify-center px-8 md:px-16"
-      style={{ fontFamily: "'IBM Plex Mono','Courier New',monospace" }}>
+      style={{ fontFamily: "var(--font-geist-mono), 'Courier New', monospace" }}>
       <div className="space-y-2 max-w-lg">
         {BOOT_LINES.map((line, i) => (
           <motion.div key={i}
@@ -662,15 +666,15 @@ function Digit({ value, label, urgent }: { value: number; label: string; urgent?
   const display = String(value).padStart(2, "0");
   return (
     <div className="flex flex-col items-center gap-2">
-      <motion.div animate={urgent ? { borderColor: ["#52525b","#ef4444","#52525b"] } : {}}
+      <motion.div aria-hidden animate={urgent ? { borderColor: ["#52525b","#ef4444","#52525b"] } : {}}
         transition={{ duration: 0.5, repeat: urgent ? Infinity : 0 }}
-        className="relative overflow-hidden border border-zinc-600 bg-zinc-950" style={{ width: 72, height: 80 }}>
+        className="relative h-16 w-12 sm:h-20 sm:w-[4.5rem] overflow-hidden border border-zinc-600 bg-zinc-950">
         <div className="absolute inset-x-0 top-1/2 h-px bg-zinc-700 z-10" />
         <AnimatePresence mode="popLayout">
           <motion.span key={display}
             initial={{ y: "-110%", opacity: 0 }} animate={{ y: "0%", opacity: 1 }} exit={{ y: "110%", opacity: 0 }}
             transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-            className={`absolute inset-0 flex items-center justify-center text-4xl font-black tabular-nums ${urgent ? "text-red-400" : "text-white"}`}
+            className={`absolute inset-0 flex items-center justify-center text-3xl sm:text-4xl font-black tabular-nums ${urgent ? "text-red-400" : "text-white"}`}
             style={{ fontFamily: "'Impact','Arial Black',sans-serif" }}>
             {display}
           </motion.span>
@@ -966,7 +970,7 @@ export default function DoomsdayDrop({ params }: { params: Promise<{ id: string 
 
   if (loading) return (
     <div className="min-h-screen w-full bg-black flex items-center justify-center"
-      style={{ fontFamily: "'IBM Plex Mono','Courier New',monospace" }}>
+      style={{ fontFamily: "var(--font-geist-mono), 'Courier New', monospace" }}>
       <motion.div animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.5, repeat: Infinity }}
         className="text-xs font-mono tracking-widest uppercase text-zinc-600">Loading drop…</motion.div>
     </div>
@@ -979,8 +983,8 @@ export default function DoomsdayDrop({ params }: { params: Promise<{ id: string 
   );
 
   return (
-    <div className="h-screen w-full bg-black text-white flex flex-col overflow-hidden"
-      style={{ fontFamily: "'IBM Plex Mono','Courier New',monospace" }}>
+    <div className="min-h-dvh lg:h-dvh w-full bg-black text-white flex flex-col overflow-x-hidden lg:overflow-hidden"
+      style={{ fontFamily: "var(--font-geist-mono), 'Courier New', monospace" }}>
 
       <style>{GLOBAL_CSS}</style>
       <CustomCursor />
@@ -1007,14 +1011,14 @@ export default function DoomsdayDrop({ params }: { params: Promise<{ id: string 
       </AnimatePresence>
 
       {/* HEADER */}
-      <header className="relative z-10 flex-shrink-0 flex items-center justify-between px-6 py-4 border-b border-zinc-800">
+      <header className="relative z-10 flex-shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-zinc-800">
         <div className="flex items-center gap-4">
           <ScrambleText text="DOOMSDAY™" tag="span"
             className="text-2xl font-black text-white"
             style={{ fontFamily: "'Impact','Arial Black',sans-serif", letterSpacing: "0.04em" }} />
           <span className="hidden sm:block text-zinc-700">|</span>
           <button onClick={() => router.push("/drops")}
-            className="hidden sm:block text-xs font-mono tracking-widest uppercase text-zinc-500 hover:text-zinc-300 transition-colors">
+            className="text-xs font-mono tracking-widest uppercase text-zinc-500 hover:text-zinc-300 transition-colors">
             All Drops
           </button>
           <span className="hidden sm:block text-zinc-800">/</span>
@@ -1031,8 +1035,8 @@ export default function DoomsdayDrop({ params }: { params: Promise<{ id: string 
           )}
           {/* Auth status */}
           {isUser ? (
-            <div className="hidden sm:flex items-center gap-3">
-              <span className="text-xs font-mono text-zinc-500 truncate max-w-[140px]">{email}</span>
+            <div className="flex items-center gap-2 sm:gap-3">
+              <span className="hidden sm:block text-xs font-mono text-zinc-500 truncate max-w-[140px]">{email}</span>
               <button onClick={logout}
                 className="text-xs font-mono tracking-widest uppercase text-zinc-600 hover:text-zinc-400 transition-colors">
                 Log out
@@ -1040,7 +1044,7 @@ export default function DoomsdayDrop({ params }: { params: Promise<{ id: string 
             </div>
           ) : (
             <button onClick={() => setAuthOpen(true)}
-              className="hidden sm:block text-xs font-mono tracking-widest uppercase border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-white transition-colors px-3 py-1.5">
+              className="text-xs font-mono tracking-widest uppercase border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-white transition-colors px-3 py-1.5">
               Sign In
             </button>
           )}
@@ -1064,7 +1068,7 @@ export default function DoomsdayDrop({ params }: { params: Promise<{ id: string 
       </div>
 
       {/* BODY */}
-      <main className="relative z-10 flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_480px]">
+      <main className="relative z-10 flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_480px]">
 
         {/* Left — photo viewer */}
         <div className="hidden lg:block border-r border-zinc-800 h-full">
@@ -1075,10 +1079,10 @@ export default function DoomsdayDrop({ params }: { params: Promise<{ id: string 
         <motion.div
           animate={shaking ? { x: [0,-7,7,-4,4,-2,0] } : { x: 0 }}
           transition={{ duration: 0.28 }}
-          className={`h-full overflow-y-auto flex flex-col p-7 md:p-9 gap-6 ${isCritical ? "ring-1 ring-inset ring-red-900/30" : ""}`}
+          className={`h-auto lg:h-full overflow-visible lg:overflow-y-auto flex flex-col p-4 sm:p-7 md:p-9 gap-6 ${isCritical ? "ring-1 ring-inset ring-red-900/30" : ""}`}
         >
           {/* Mobile photo */}
-          <div className="lg:hidden h-72 -mx-7 md:-mx-9">
+          <div className="lg:hidden h-[50svh] min-h-72 -mx-4 sm:-mx-7 md:-mx-9">
             <PhotoViewer photos={PHOTOS} phase={effectivePhase} price={price} edition={EDITION} />
           </div>
 
@@ -1090,7 +1094,7 @@ export default function DoomsdayDrop({ params }: { params: Promise<{ id: string 
               initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.3, duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
               onMouseEnter={titleScramble}
-              className="text-5xl md:text-6xl font-black leading-none uppercase text-white"
+              className="text-4xl sm:text-5xl md:text-6xl font-black leading-none uppercase text-white"
               style={{ fontFamily: "'Impact','Arial Black',sans-serif", letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums" }}>
               {titleDisplay}
             </motion.h1>
@@ -1111,15 +1115,15 @@ export default function DoomsdayDrop({ params }: { params: Promise<{ id: string 
                : effectivePhase === "live" ? "Drop Closes In" : "Drop Closed"}
             </p>
             {effectivePhase !== "ended" && effectivePhase !== "sold_out" ? (
-              <div className="flex items-end gap-3">
+              <div className="flex items-end gap-1.5 sm:gap-3" role="timer" aria-live="off" aria-label={`${timeLeft.days} days, ${timeLeft.hours} hours, ${timeLeft.minutes} minutes, ${timeLeft.seconds} seconds`}>
                 {timeLeft.days > 0 && <>
                   <Digit value={timeLeft.days}  label="Days" urgent={isUrgent} />
-                  <span className={`text-3xl font-mono mb-7 leading-none ${isUrgent ? "text-red-500" : "text-zinc-500"}`}>:</span>
+                  <span aria-hidden className={`text-2xl sm:text-3xl font-mono mb-7 leading-none ${isUrgent ? "text-red-500" : "text-zinc-500"}`}>:</span>
                 </>}
                 <Digit value={timeLeft.hours}   label="Hrs"  urgent={isUrgent} />
-                <span className={`text-3xl font-mono mb-7 leading-none ${isUrgent ? "text-red-500" : "text-zinc-500"}`}>:</span>
+                <span aria-hidden className={`text-2xl sm:text-3xl font-mono mb-7 leading-none ${isUrgent ? "text-red-500" : "text-zinc-500"}`}>:</span>
                 <Digit value={timeLeft.minutes} label="Min"  urgent={isUrgent} />
-                <span className={`text-3xl font-mono mb-7 leading-none ${isUrgent ? "text-red-500" : "text-zinc-500"}`}>:</span>
+                <span aria-hidden className={`text-2xl sm:text-3xl font-mono mb-7 leading-none ${isUrgent ? "text-red-500" : "text-zinc-500"}`}>:</span>
                 <Digit value={timeLeft.seconds} label="Sec"  urgent={isUrgent} />
               </div>
             ) : (
@@ -1162,7 +1166,7 @@ export default function DoomsdayDrop({ params }: { params: Promise<{ id: string 
             <AnimatePresence>
               {reserveState.status === "error" && (
                 <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                  exit={{ opacity: 0, height: 0 }} role="alert" aria-live="assertive" className="overflow-hidden">
                   <div className="flex items-start gap-3 p-4 border border-red-800 bg-red-950/20">
                     <span className="text-red-400 text-sm font-mono mt-0.5">✕</span>
                     <div className="flex-1 space-y-1.5">
