@@ -36,7 +36,7 @@ Progress is tracked in the umbrella issue [#27](https://github.com/yngnoise/doom
   - Exercise OTP sign-in, reservation, payment, confirmation, expiry, waitlist, and refund
   - Run the complete stack with PostgreSQL and Redis in CI
   - Retain traces and screenshots for failed scenarios
-- [ ] [Introduce a transactional outbox and background worker](https://github.com/yngnoise/doomsday/issues/22)
+- [x] [Introduce a transactional outbox and background worker](https://github.com/yngnoise/doomsday/issues/22)
   - Persist asynchronous jobs with business transactions
   - Add retries, exponential backoff, idempotency keys, and dead-letter handling
   - Make scheduled reservation expiry safe across multiple instances
