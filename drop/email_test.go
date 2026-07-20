@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"regexp"
 	"testing"
 )
 
@@ -28,5 +29,19 @@ func TestDemoModeDisablesSMTP(t *testing.T) {
 	mailer := NewMailer(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if mailer.Enabled() {
 		t.Fatal("NewMailer() enabled SMTP in demo mode")
+	}
+}
+
+func TestBuildMIMEUsesStableMessageIDForRetries(t *testing.T) {
+	first := buildMIME("from@example.com", "to@example.com", "Subject", "Body", "order-confirmation:ORD-1")
+	second := buildMIME("from@example.com", "to@example.com", "Subject", "Body", "order-confirmation:ORD-1")
+	pattern := regexp.MustCompile(`(?m)^Message-ID: (.+)$`)
+	firstID := pattern.FindStringSubmatch(first)
+	secondID := pattern.FindStringSubmatch(second)
+	if len(firstID) != 2 || len(secondID) != 2 {
+		t.Fatal("Message-ID header is missing")
+	}
+	if firstID[1] != secondID[1] {
+		t.Fatalf("Message-ID changed across retries: %q != %q", firstID[1], secondID[1])
 	}
 }

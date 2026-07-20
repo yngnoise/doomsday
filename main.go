@@ -74,13 +74,16 @@ func main() {
 	// ── Services ───────────────────────────────────────────────────────────
 	mailer := drop.NewMailer(logger)
 	hub := drop.NewHub()
-	sched := drop.NewScheduler(db, rdb, hub, mailer, logger)
-	sched.Start(ctx)
 
 	h, err := drop.NewHandler(ctx, rdb, db, hub, mailer, logger, os.Getenv("PAYMENT_WEBHOOK_SECRET"))
 	if err != nil {
 		log.Fatalf("handler: %v", err)
 	}
+	dispatcher := drop.NewApplicationJobDispatcher(db, rdb, hub, mailer, logger, h)
+	worker := drop.NewOutboxWorker(db, dispatcher, logger)
+	worker.Start(ctx)
+	sched := drop.NewScheduler(db, logger)
+	sched.Start(ctx)
 
 	admin := drop.NewAdminHandler(rdb, db, logger)
 	otp := drop.NewOTPHandler(db, rdb, mailer, logger)
@@ -169,4 +172,6 @@ func main() {
 			logger.Error("HTTP shutdown failed", slog.Any("err", err))
 		}
 	}
+	stop()
+	worker.Wait()
 }

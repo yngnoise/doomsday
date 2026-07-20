@@ -65,6 +65,10 @@ The fixed OTP and reservation-expiry controls are available only when `APP_ENV=t
 
 Responsive and accessibility verification is documented in [docs/accessibility.md](docs/accessibility.md). Run the desktop and mobile WCAG checks with `npm run test:a11y`.
 
+## Durable background work
+
+Payment simulation, transactional emails, reservation expiry, and waitlist promotion run through a PostgreSQL transactional outbox. Jobs use multi-worker-safe claims, crash recovery, exponential retry, dead-letter handling, and stable idempotency keys. See [docs/outbox.md](docs/outbox.md) for the delivery model and operational queries.
+
 ## Safe portfolio demo
 
 The repository includes production container images, a local four-service demo stack, and a Render Blueprint. The demo uses simulated payments, disables outbound email, exposes its OTP in the sign-in UI, and recreates disposable data on each API start.

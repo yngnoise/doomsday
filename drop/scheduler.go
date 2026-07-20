@@ -2,33 +2,29 @@ package drop
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 )
 
 type Scheduler struct {
 	db     *pgxpool.Pool
-	redis  *redis.Client
-	hub    *Hub
-	mailer *Mailer
 	logger *slog.Logger
 }
 
-func NewScheduler(db *pgxpool.Pool, rdb *redis.Client, hub *Hub, mailer *Mailer, logger *slog.Logger) *Scheduler {
-	return &Scheduler{db: db, redis: rdb, hub: hub, mailer: mailer, logger: logger}
+func NewScheduler(db *pgxpool.Pool, logger *slog.Logger) *Scheduler {
+	return &Scheduler{db: db, logger: logger}
 }
 
-// Start launches the background expiry sweep every 30 seconds.
+// Start claims expired reservations every 30 seconds. The claim and its
+// outbox job are committed atomically, so any number of schedulers may run.
 func (s *Scheduler) Start(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
-		s.logger.InfoContext(ctx, "scheduler started — expiry sweep every 30s")
+		s.logger.InfoContext(ctx, "scheduler started", slog.Duration("interval", 30*time.Second))
 		for {
 			select {
 			case <-ctx.Done():
@@ -40,14 +36,22 @@ func (s *Scheduler) Start(ctx context.Context) {
 	}()
 }
 
-// processExpired marks timed-out pending reservations as expired,
-// restores their stock in Redis, broadcasts via SSE, and promotes the waitlist.
+// processExpired changes pending reservations to the intermediate expiring
+// state and persists one stable expiry job in the same transaction.
 func (s *Scheduler) processExpired(ctx context.Context) {
-	rows, err := s.db.Query(ctx, `
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "expiry sweep transaction failed", slog.Any("err", err))
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, `
 		SELECT id, drop_id, user_id, size
 		FROM reservations
 		WHERE status = 'pending' AND expires_at < NOW()
 		ORDER BY expires_at
+		FOR UPDATE SKIP LOCKED
 		LIMIT 500
 	`)
 	if err != nil {
@@ -57,119 +61,55 @@ func (s *Scheduler) processExpired(ctx context.Context) {
 	type expiredReservation struct {
 		id, dropID, userID, size string
 	}
-	var expired []expiredReservation
+	var reservations []expiredReservation
 	for rows.Next() {
 		var reservation expiredReservation
 		if err := rows.Scan(&reservation.id, &reservation.dropID, &reservation.userID, &reservation.size); err != nil {
+			rows.Close()
 			s.logger.ErrorContext(ctx, "expiry row scan failed", slog.Any("err", err))
-			continue
+			return
 		}
-		expired = append(expired, reservation)
+		reservations = append(reservations, reservation)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		s.logger.ErrorContext(ctx, "expiry rows failed", slog.Any("err", err))
+		return
 	}
 	rows.Close()
 
-	counts := make(map[string]int64)
-	latestStock := make(map[string]int64)
-	for _, reservation := range expired {
-		release, err := releaseReservationInRedis(
-			ctx,
-			s.redis,
-			reservation.dropID,
-			reservation.size,
-			reservation.userID,
-			reservation.id,
-		)
+	for _, reservation := range reservations {
+		result, err := tx.Exec(ctx, `
+			UPDATE reservations SET status = 'expiring'
+			WHERE id = $1 AND status = 'pending'
+		`, reservation.id)
 		if err != nil {
-			s.logger.ErrorContext(ctx, "reservation release failed",
-				slog.String("reservation", reservation.id),
-				slog.String("drop", reservation.dropID),
-				slog.Any("err", err),
-			)
+			s.logger.ErrorContext(ctx, "reservation expiry claim failed", slog.String("reservation", reservation.id), slog.Any("err", err))
+			return
+		}
+		if result.RowsAffected() != 1 {
 			continue
 		}
-
-		if _, err := s.db.Exec(ctx, `
-			UPDATE reservations
-			SET status = 'expired'
-			WHERE id = $1 AND status = 'pending'
-		`, reservation.id); err != nil {
-			s.logger.ErrorContext(ctx, "reservation expiry status update failed",
-				slog.String("reservation", reservation.id),
-				slog.Any("err", err),
-			)
+		payload := reservationExpiryPayload{
+			ReservationID: reservation.id,
+			DropID:        reservation.dropID,
+			UserID:        reservation.userID,
+			Size:          reservation.size,
 		}
-
-		if release.Released {
-			counts[reservation.dropID]++
-			latestStock[reservation.dropID] = release.TotalStock
+		if err := enqueueOutboxJob(ctx, tx, outboxJobReservationExpiry, reservationExpiryKey(reservation.id), payload); err != nil {
+			s.logger.ErrorContext(ctx, "reservation expiry enqueue failed", slog.String("reservation", reservation.id), slog.Any("err", err))
+			return
 		}
 	}
-
-	for dropID, n := range counts {
-		newStock := latestStock[dropID]
-		s.hub.Broadcast(dropID, newStock)
-		s.logger.InfoContext(ctx, "stock restored",
-			slog.String("drop", dropID),
-			slog.Int64("restored", n),
-			slog.Int64("new_stock", newStock),
-		)
-		s.promoteWaitlist(ctx, dropID, n)
+	if err := tx.Commit(ctx); err != nil {
+		s.logger.ErrorContext(ctx, "expiry sweep commit failed", slog.Any("err", err))
+		return
+	}
+	if len(reservations) > 0 {
+		s.logger.InfoContext(ctx, "expired reservations claimed", slog.Int("count", len(reservations)))
 	}
 }
 
-// promoteWaitlist pops the next N users from the sorted-set queue
-// and sends each a promotion email.
-func (s *Scheduler) promoteWaitlist(ctx context.Context, dropID string, n int64) {
-	key := fmt.Sprintf("drop:%s:waitlist", dropID)
-	promoted, err := s.redis.ZPopMin(ctx, key, n).Result()
-	if err != nil || len(promoted) == 0 {
-		return
-	}
-
-	// Fetch drop name for the email
-	dropName := dropID
-	if raw, err := s.redis.Get(ctx, fmt.Sprintf("drop:%s:meta", dropID)).Bytes(); err == nil {
-		var d struct {
-			Name string `json:"name"`
-		}
-		if jsonErr := json.Unmarshal(raw, &d); jsonErr == nil && d.Name != "" {
-			dropName = d.Name
-		}
-	}
-
-	for _, m := range promoted {
-		userID, _ := m.Member.(string)
-		s.logger.InfoContext(ctx, "waitlist user promoted",
-			slog.String("drop", dropID),
-			slog.String("user", userID),
-		)
-		var email string
-		if err := s.db.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&email); err != nil {
-			s.logger.ErrorContext(ctx, "waitlist user lookup failed",
-				slog.String("drop", dropID),
-				slog.String("user", userID),
-				slog.Any("err", err),
-			)
-			if addErr := s.redis.ZAdd(ctx, key, redis.Z{Score: m.Score, Member: userID}).Err(); addErr != nil {
-				s.logger.ErrorContext(ctx, "waitlist requeue failed",
-					slog.String("drop", dropID),
-					slog.String("user", userID),
-					slog.Any("err", addErr),
-				)
-			}
-			continue
-		}
-		if err := s.mailer.SendWaitlistPromotion(ctx, email, dropID, dropName); err != nil {
-			if addErr := s.redis.ZAdd(ctx, key, redis.Z{Score: m.Score, Member: userID}).Err(); addErr != nil {
-				s.logger.ErrorContext(ctx, "waitlist requeue after email failure failed",
-					slog.String("drop", dropID),
-					slog.String("user", userID),
-					slog.Any("err", addErr),
-				)
-			}
-		}
-	}
+func reservationExpiryKey(reservationID string) string {
+	return fmt.Sprintf("reservation-expiry:%s", reservationID)
 }

@@ -126,6 +126,8 @@ func TestReservationLifecycleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dispatcher := NewApplicationJobDispatcher(db, rdb, hub, mailer, logger, handler)
+	worker := NewOutboxWorker(db, dispatcher, logger)
 
 	t.Run("only one concurrent reservation wins the last item", func(t *testing.T) {
 		users := []string{"user-a-" + suffix, "user-b-" + suffix}
@@ -185,13 +187,44 @@ func TestReservationLifecycleIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		scheduler := NewScheduler(db, rdb, hub, mailer, logger)
-		scheduler.processExpired(ctx)
-		scheduler.processExpired(ctx)
+		schedulers := []*Scheduler{
+			NewScheduler(db, logger),
+			NewScheduler(db, logger),
+		}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for _, scheduler := range schedulers {
+			wg.Add(1)
+			go func(scheduler *Scheduler) {
+				defer wg.Done()
+				<-start
+				scheduler.processExpired(ctx)
+			}(scheduler)
+		}
+		close(start)
+		wg.Wait()
 
 		var status string
 		if err := db.QueryRow(ctx, `SELECT status FROM reservations WHERE id = $1`, reservationID).Scan(&status); err != nil {
 			t.Fatal(err)
+		}
+		var jobs int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM outbox_jobs WHERE idempotency_key = $1`, reservationExpiryKey(reservationID)).Scan(&jobs); err != nil {
+			t.Fatal(err)
+		}
+		if status != "expiring" || jobs != 1 {
+			t.Fatalf("claimed status = %q, expiry jobs = %d; want expiring and 1", status, jobs)
+		}
+		for attempt := 0; attempt < 20; attempt++ {
+			if processed, err := worker.ProcessOne(ctx); err != nil {
+				t.Fatalf("process outbox job: processed=%v err=%v", processed, err)
+			}
+			if err := db.QueryRow(ctx, `SELECT status FROM reservations WHERE id = $1`, reservationID).Scan(&status); err != nil {
+				t.Fatal(err)
+			}
+			if status == "expired" {
+				break
+			}
 		}
 		stock, err := rdb.Get(ctx, fmt.Sprintf("drop:%s:stock", expiryDrop)).Int64()
 		if err != nil {
@@ -201,6 +234,8 @@ func TestReservationLifecycleIntegration(t *testing.T) {
 			t.Fatalf("status = %q, stock = %d", status, stock)
 		}
 	})
+
+	worker.Start(ctx)
 
 	t.Run("concurrent payment creation and duplicate webhook create one order", func(t *testing.T) {
 		reservationID := "checkout-" + suffix

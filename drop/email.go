@@ -2,6 +2,7 @@ package drop
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
 	"log/slog"
@@ -61,7 +62,7 @@ func (m *Mailer) Enabled() bool {
 // TRANSPORT — SSL on port 465 (Yandex default)
 // ─────────────────────────────────────────────────────────────────────────────
 
-func (m *Mailer) send(ctx context.Context, to, subject, html string) error {
+func (m *Mailer) send(ctx context.Context, to, subject, html string, idempotencyKey ...string) error {
 	if !m.Enabled() {
 		m.logger.InfoContext(ctx, "email skipped (SMTP not configured)", slog.String("to", to))
 		return nil
@@ -75,7 +76,7 @@ func (m *Mailer) send(ctx context.Context, to, subject, html string) error {
 	addr := net.JoinHostPort(m.host, port)
 
 	// Build raw MIME message
-	msg := buildMIME(m.from, to, subject, html)
+	msg := buildMIME(m.from, to, subject, html, idempotencyKey...)
 
 	auth := smtp.PlainAuth("", m.user, m.pass, m.host)
 
@@ -123,8 +124,11 @@ func (m *Mailer) send(ctx context.Context, to, subject, html string) error {
 	return smtp.SendMail(addr, auth, m.user, []string{to}, []byte(msg))
 }
 
-func buildMIME(from, to, subject, html string) string {
+func buildMIME(from, to, subject, html string, idempotencyKey ...string) string {
 	msgID := fmt.Sprintf("<%d.doomsday@%s>", time.Now().UnixNano(), "yandex.ru")
+	if len(idempotencyKey) > 0 && idempotencyKey[0] != "" {
+		msgID = fmt.Sprintf("<%x@doomsday.local>", sha256.Sum256([]byte(idempotencyKey[0])))
+	}
 	var sb strings.Builder
 	sb.WriteString("MIME-Version: 1.0\r\n")
 	sb.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
@@ -338,71 +342,71 @@ func (m *Mailer) SendOTP(ctx context.Context, to, code string) {
 // RESERVATION CONFIRMATION
 // ─────────────────────────────────────────────────────────────────────────────
 
-func (m *Mailer) SendReservationConfirmation(ctx context.Context, to, name, itemName, reservationID string, expiresAt time.Time) {
-	go func() {
-		minutesLeft := int(time.Until(expiresAt).Minutes()) + 1
-		checkoutURL := fmt.Sprintf("%s/checkout/%s?expires=%s",
-			m.siteURL, reservationID, expiresAt.UTC().Format(time.RFC3339))
+func (m *Mailer) SendReservationConfirmation(ctx context.Context, to, name, itemName, reservationID string, expiresAt time.Time, idempotencyKey ...string) error {
+	minutesLeft := int(time.Until(expiresAt).Minutes()) + 1
+	checkoutURL := fmt.Sprintf("%s/checkout/%s?expires=%s",
+		m.siteURL, reservationID, expiresAt.UTC().Format(time.RFC3339))
 
-		content := fmt.Sprintf(`
+	content := fmt.Sprintf(`
 <p style="font-family:'Courier New',Courier,monospace;font-size:11px;color:#71717a;letter-spacing:0.25em;text-transform:uppercase;margin:0 0 8px;">Status Update</p>
 <p style="font-family:Impact,'Arial Black',Arial,sans-serif;font-size:48px;font-weight:900;color:#ffffff;line-height:0.95;margin:0 0 32px;">ITEM<br/>SECURED</p>
 %s%s%s%s%s%s%s`,
-			emailRow("Item", itemName, "#ffffff"),
-			emailRow("Reservation ID", fmt.Sprintf(`<span style="font-family:'Courier New',Courier,monospace;font-size:12px;color:#a1a1aa;">%s</span>`, reservationID), ""),
-			emailRow("Status", `<span style="color:#22c55e;font-weight:700;">&#10003; Reserved</span>`, ""),
-			emailRow("Expires", expiresAt.UTC().Format("02 Jan 2006 · 15:04 UTC"), "#ef4444"),
-			emailAlert(fmt.Sprintf("You have %d minutes to complete checkout. After that your reservation will be released.", minutesLeft), "#ef4444"),
-			emailCTA("Complete Checkout", checkoutURL),
-			emailDivider(),
-		)
+		emailRow("Item", itemName, "#ffffff"),
+		emailRow("Reservation ID", fmt.Sprintf(`<span style="font-family:'Courier New',Courier,monospace;font-size:12px;color:#a1a1aa;">%s</span>`, reservationID), ""),
+		emailRow("Status", `<span style="color:#22c55e;font-weight:700;">&#10003; Reserved</span>`, ""),
+		emailRow("Expires", expiresAt.UTC().Format("02 Jan 2006 · 15:04 UTC"), "#ef4444"),
+		emailAlert(fmt.Sprintf("You have %d minutes to complete checkout. After that your reservation will be released.", minutesLeft), "#ef4444"),
+		emailCTA("Complete Checkout", checkoutURL),
+		emailDivider(),
+	)
 
-		if err := m.send(context.Background(), to,
-			"Item secured — complete checkout now",
-			emailBase("Reservation Confirmed", content)); err != nil {
-			m.logger.Error("reservation email failed", slog.String("to", to), slog.Any("err", err))
-		}
-	}()
+	if err := m.send(ctx, to,
+		"Item secured — complete checkout now",
+		emailBase("Reservation Confirmed", content), idempotencyKey...); err != nil {
+		m.logger.ErrorContext(ctx, "reservation email failed", slog.String("to", to), slog.Any("err", err))
+		return err
+	}
+	return nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ORDER CONFIRMATION
 // ─────────────────────────────────────────────────────────────────────────────
 
-func (m *Mailer) SendOrderConfirmation(ctx context.Context, to, name, itemName, orderID string, priceCents int) {
-	go func() {
-		price := fmt.Sprintf("$%d", priceCents/100)
-		dispatch := time.Now().AddDate(0, 0, 2).Format("02 Jan 2006")
+func (m *Mailer) SendOrderConfirmation(ctx context.Context, to, name, itemName, orderID string, priceCents int, idempotencyKey ...string) error {
+	price := fmt.Sprintf("$%d", priceCents/100)
+	dispatch := time.Now().AddDate(0, 0, 2).Format("02 Jan 2006")
 
-		content := fmt.Sprintf(`
+	content := fmt.Sprintf(`
 <p style="font-family:'Courier New',Courier,monospace;font-size:11px;color:#71717a;letter-spacing:0.25em;text-transform:uppercase;margin:0 0 8px;">Order Confirmed</p>
 <p style="font-family:Impact,'Arial Black',Arial,sans-serif;font-size:48px;font-weight:900;color:#ffffff;line-height:0.95;margin:0 0 32px;">ORDER<br/>LOCKED IN</p>
 %s%s%s%s%s%s%s
 <p style="font-family:'Courier New',Courier,monospace;font-size:12px;color:#71717a;line-height:1.7;margin:0 0 36px;">
   This is a one-of-a-kind item from a limited production run.<br/>No restocks. No returns. No exceptions.
 </p>`,
-			emailRow("Order ID", orderID, "#ffffff"),
-			emailRow("Item", itemName, "#ffffff"),
-			emailDivider(),
-			emailRow("Subtotal", price, "#d4d4d8"),
-			emailRow("Shipping", "Free — tracked worldwide", "#d4d4d8"),
-			emailRow("Estimated Dispatch", dispatch, "#d4d4d8"),
-			emailDivider(),
-		)
+		emailRow("Order ID", orderID, "#ffffff"),
+		emailRow("Item", itemName, "#ffffff"),
+		emailDivider(),
+		emailRow("Subtotal", price, "#d4d4d8"),
+		emailRow("Shipping", "Free — tracked worldwide", "#d4d4d8"),
+		emailRow("Estimated Dispatch", dispatch, "#d4d4d8"),
+		emailDivider(),
+	)
 
-		if err := m.send(context.Background(), to,
-			fmt.Sprintf("Order %s confirmed — DOOMSDAY", orderID),
-			emailBase("Order Confirmation", content)); err != nil {
-			m.logger.Error("order email failed", slog.String("to", to), slog.Any("err", err))
-		}
-	}()
+	if err := m.send(ctx, to,
+		fmt.Sprintf("Order %s confirmed — DOOMSDAY", orderID),
+		emailBase("Order Confirmation", content), idempotencyKey...); err != nil {
+		m.logger.ErrorContext(ctx, "order email failed", slog.String("to", to), slog.Any("err", err))
+		return err
+	}
+	return nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WAITLIST PROMOTION
 // ─────────────────────────────────────────────────────────────────────────────
 
-func (m *Mailer) SendWaitlistPromotion(ctx context.Context, to, dropID, dropName string) error {
+func (m *Mailer) SendWaitlistPromotion(ctx context.Context, to, dropID, dropName string, idempotencyKey ...string) error {
 	if !m.Enabled() {
 		err := fmt.Errorf("SMTP is not configured")
 		m.logger.WarnContext(ctx, "waitlist email not scheduled", slog.String("to", to), slog.Any("err", err))
@@ -426,7 +430,7 @@ func (m *Mailer) SendWaitlistPromotion(ctx context.Context, to, dropID, dropName
 
 	if err := m.send(ctx, to,
 		"Your waitlist slot is open — "+dropName,
-		emailBase("Waitlist Notification", content)); err != nil {
+		emailBase("Waitlist Notification", content), idempotencyKey...); err != nil {
 		m.logger.ErrorContext(ctx, "waitlist email failed", slog.String("to", to), slog.Any("err", err))
 		return err
 	}

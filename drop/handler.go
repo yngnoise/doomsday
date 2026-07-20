@@ -68,7 +68,6 @@ type Handler struct {
 	mailer               *Mailer
 	logger               *slog.Logger
 	paymentWebhookSecret string
-	paymentGateway       paymentGateway
 }
 
 func NewHandler(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, hub *Hub, mailer *Mailer, logger *slog.Logger, paymentWebhookSecret ...string) (*Handler, error) {
@@ -81,7 +80,6 @@ func NewHandler(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, hub *H
 		secret = paymentWebhookSecret[0]
 	}
 	h := &Handler{redis: rdb, db: db, sha: sha, hub: hub, mailer: mailer, logger: logger, paymentWebhookSecret: secret}
-	h.paymentGateway = newSimulatedPaymentGateway(logger, h.deliverSimulatedEvent)
 	if err := h.initStock(ctx); err != nil {
 		logger.WarnContext(ctx, "stock init warning", slog.Any("err", err))
 	}
@@ -379,7 +377,14 @@ func (h *Handler) ReserveItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expiresAt := now.Add(10 * time.Minute)
-	if err := h.persistReservation(ctx, reservationID, req.DropID, req.ItemID, userID, req.Size, expiresAt); err != nil {
+	var confirmation *reservationEmailPayload
+	if req.Email != "" {
+		confirmation = &reservationEmailPayload{
+			To: req.Email, Name: userID, ItemName: d.Name,
+			ReservationID: reservationID, ExpiresAt: expiresAt,
+		}
+	}
+	if err := h.persistReservation(ctx, reservationID, req.DropID, req.ItemID, userID, req.Size, expiresAt, confirmation); err != nil {
 		h.logger.ErrorContext(ctx, "reservation persistence failed",
 			slog.String("reservation", reservationID),
 			slog.Any("err", err),
@@ -409,10 +414,6 @@ func (h *Handler) ReserveItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.hub.Broadcast(req.DropID, totalLeft)
-
-	if req.Email != "" {
-		h.mailer.SendReservationConfirmation(ctx, req.Email, userID, d.Name, reservationID, expiresAt)
-	}
 
 	writeJSON(w, http.StatusCreated, ReserveResponse{
 		ReservationID: reservationID,
@@ -560,14 +561,19 @@ func (h *Handler) CompleteCheckout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not complete order")
 		return
 	}
+	if err := enqueueOutboxJob(ctx, tx, outboxJobOrderEmail, "order-confirmation:"+orderID, orderEmailPayload{
+		To: verifiedEmail, Name: req.Name, ItemName: dropName, OrderID: orderID, PriceCents: priceCents,
+	}); err != nil {
+		h.logger.ErrorContext(ctx, "order confirmation enqueue failed", slog.Any("err", err))
+		writeError(w, http.StatusInternalServerError, "could not complete order")
+		return
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		h.logger.ErrorContext(ctx, "order transaction commit failed", slog.Any("err", err))
 		writeError(w, http.StatusInternalServerError, "could not complete order")
 		return
 	}
-
-	h.mailer.SendOrderConfirmation(ctx, verifiedEmail, req.Name, dropName, orderID, priceCents)
 
 	h.logger.Info("order completed",
 		slog.String("order", orderID),
@@ -637,8 +643,13 @@ func (h *Handler) reserveInRedis(ctx context.Context, dropID, size, userID, rese
 	return code, totalLeft, nil
 }
 
-func (h *Handler) persistReservation(ctx context.Context, id, dropID, itemID, userID, size string, expiresAt time.Time) error {
-	result, err := h.db.Exec(ctx, `
+func (h *Handler) persistReservation(ctx context.Context, id, dropID, itemID, userID, size string, expiresAt time.Time, confirmation *reservationEmailPayload) error {
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	result, err := tx.Exec(ctx, `
 		INSERT INTO reservations (id, drop_id, item_id, user_id, size, status, expires_at, created_at)
 		VALUES ($1,$2,$3,$4,$5,'pending',$6,NOW())
 		ON CONFLICT (id) DO NOTHING
@@ -649,7 +660,12 @@ func (h *Handler) persistReservation(ctx context.Context, id, dropID, itemID, us
 	if result.RowsAffected() != 1 {
 		return fmt.Errorf("reservation %s was not inserted", id)
 	}
-	return nil
+	if confirmation != nil {
+		if err := enqueueOutboxJob(ctx, tx, outboxJobReservationEmail, "reservation-confirmation:"+id, *confirmation); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (h *Handler) fetchDrop(ctx context.Context, dropID string) (*dropRecord, error) {
