@@ -6,7 +6,7 @@ Progress is tracked in the umbrella issue [#27](https://github.com/yngnoise/doom
 
 ## Phase 1 — Payment architecture
 
-- [ ] [Build a production-style payment gateway simulator](https://github.com/yngnoise/doomsday/issues/18)
+- [x] [Build a production-style payment gateway simulator](https://github.com/yngnoise/doomsday/issues/18)
   - Persist payments and payment events
   - Support success, decline, cancellation, timeout, and refund scenarios
   - Deliver asynchronous signed webhooks
@@ -51,7 +51,7 @@ Progress is tracked in the umbrella issue [#27](https://github.com/yngnoise/doom
 
 ## Phase 4 — Portfolio presentation
 
-- [ ] [Turn the README into an English engineering case study](https://github.com/yngnoise/doomsday/issues/26)
+- [x] [Turn the README into an English engineering case study](https://github.com/yngnoise/doomsday/issues/26)
   - Explain the problem, constraints, architecture, and trade-offs
   - Add architecture and event-flow diagrams
   - Link technical claims to tests and measurable results
