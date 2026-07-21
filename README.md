@@ -101,6 +101,7 @@ Payment events have deterministic IDs, webhook inserts are conflict-safe, and th
 | Critical customer paths work end to end | Real Go, PostgreSQL, Redis, Next.js, and Chromium in CI | [Playwright journeys](e2e/critical-journeys.spec.ts), [CI workflow](.github/workflows/ci.yml) |
 | Core pages meet the automated accessibility baseline | Desktop and Pixel 5 axe scans, keyboard and focus assertions | [Accessibility tests](e2e/accessibility.spec.ts), [audit notes](docs/accessibility.md) |
 | Requests and durable jobs remain diagnosable without leaking customer data | JSON logs, correlation IDs, bounded Prometheus labels, OpenTelemetry context in the outbox | [Observability tests](drop/observability_test.go), [operations guide](docs/observability.md) |
+| Concurrency and recovery claims are repeatable | k6 contention/checkout/SSE workloads, Toxiproxy dependency failures, PostgreSQL/Redis invariant checks | [Load-testing guide](docs/load-testing.md), [CI workflow](.github/workflows/ci.yml) |
 
 The current Lighthouse baseline is Accessibility 100, Best Practices 100, SEO 100, Performance 66, CLS 0, and LCP 3.3 seconds on a local production build. Measurement details and reproduction steps are in [docs/accessibility.md](docs/accessibility.md).
 
@@ -113,7 +114,7 @@ The current Lighthouse baseline is Accessibility 100, Best Practices 100, SEO 10
 | Data | PostgreSQL 16, Redis 7 |
 | Authentication | Email OTP, HMAC hashing, JWT |
 | Async work | PostgreSQL transactional outbox |
-| Testing | Go test, Playwright, axe-core |
+| Testing | Go test, Playwright, axe-core, k6, Toxiproxy |
 | Delivery | Docker, Docker Compose, Render Blueprint, GitHub Actions |
 
 ## Try the safe demo
@@ -199,6 +200,9 @@ npm run test:e2e
 
 # Accessibility-focused subset
 npm run test:a11y
+
+# Disposable k6, failure-injection, and invariant suite
+sh scripts/run-load-tests.sh
 ```
 
 The PostgreSQL/Redis integration suite uses the `integration` build tag and the `TEST_DATABASE_URL` plus `TEST_REDIS_ADDR` environment variables:
@@ -233,7 +237,6 @@ This is a portfolio system, not a PCI-compliant commerce platform.
 
 - There is no real acquirer, tax calculation, shipping integration, fulfillment, returns, or customer support workflow.
 - The public Render URL is not yet published; free-tier PostgreSQL and web services are not durable production infrastructure.
-- Formal load and dependency-failure reports are planned in [issue #24](https://github.com/yngnoise/doomsday/issues/24).
 - Admin and live-drop operational UX is still being expanded in [issue #25](https://github.com/yngnoise/doomsday/issues/25).
 - Automated accessibility checks do not replace manual screen-reader, zoom, and assistive-technology testing.
 

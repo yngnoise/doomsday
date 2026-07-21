@@ -35,7 +35,7 @@ func ResetDemoData(ctx context.Context, db *pgxpool.Pool, rdb *redis.Client) err
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx, `
-		TRUNCATE payment_events, payments, orders, reservations, otp_codes, users, drop_sizes, drops CASCADE
+		TRUNCATE outbox_jobs, payment_events, payments, orders, reservations, otp_codes, users, drop_sizes, drops CASCADE
 	`); err != nil {
 		return fmt.Errorf("clear demo database: %w", err)
 	}
