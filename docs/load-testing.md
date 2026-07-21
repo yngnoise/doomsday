@@ -23,7 +23,7 @@ Do not point the runner or invariant repair command at shared or production infr
 | Checkout | 12 concurrent reservation and asynchronous approved-payment journeys | Each settled payment produces exactly one completed reservation and order |
 | SSE | 20 subscribers while 20 users reserve stock | Every subscriber receives a valid non-negative stock event |
 
-The thresholds are deliberately modest enough for a shared GitHub runner: HTTP p95 below 1 second, HTTP failure rate below 2%, checkout completion p95 below 15 seconds, and SSE first-event p95 below 5 seconds. Correctness is enforced separately from latency.
+The thresholds are deliberately modest enough for a shared GitHub runner: non-streaming HTTP p95 below 1 second, HTTP failure rate below 2%, checkout completion p95 below 15 seconds, and SSE first-event p95 below 5 seconds. The open duration of an SSE stream is not HTTP response latency, so it is measured only by the dedicated first-event trend. Correctness is enforced separately from latency.
 
 ## Invariants after every scenario
 
