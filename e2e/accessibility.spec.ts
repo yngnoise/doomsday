@@ -26,6 +26,8 @@ test.describe("responsive accessibility", () => {
     await page.goto("/drops");
     const drop = page.getByRole("button", { name: new RegExp(fixture("E2E_LIVE_DROP_NAME"), "i") });
     await expect(drop).toBeVisible();
+    await expect(page.getByTestId("custom-cursor-ring")).toHaveCount(0);
+    expect(await drop.evaluate((element) => getComputedStyle(element).cursor)).not.toBe("none");
     await drop.focus();
     await expect(drop).toBeFocused();
     await page.keyboard.press("Enter");
