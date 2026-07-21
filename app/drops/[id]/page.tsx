@@ -7,6 +7,7 @@ import {
   useMotionValue, useTransform, animate,
 } from "framer-motion";
 import AuthModal from "@/components/AuthModal";
+import CustomCursor from "@/components/CustomCursor";
 import SafeProductImage from "@/components/SafeProductImage";
 import { getProductImages } from "@/lib/productImages";
 
@@ -46,7 +47,7 @@ type WaitlistState =
 // ─────────────────────────────────────────────────────────────────────────────
 const GLOBAL_CSS = `
   @media (hover: hover) and (pointer: fine) {
-    * { cursor: none !important; }
+    html.custom-cursor-active * { cursor: none !important; }
   }
   .crt-overlay {
     pointer-events: none; position: fixed; inset: 0; z-index: 9990;
@@ -123,18 +124,53 @@ function PhotoViewer({ photos, phase, price, edition }: {
   const PHOTOS = photos;
   const [active, setActive] = useState(0);
   const [zoomed, setZoomed] = useState(false);
-  // origin as % within the image area — drives transform-origin on the img
-  const [origin, setOrigin] = useState({ x: 50, y: 50 });
   const areaRef = useRef<HTMLDivElement>(null);
+  const boundsRef = useRef<DOMRect | null>(null);
+  const pointerRef = useRef({ x: 0, y: 0 });
+  const zoomFrameRef = useRef<number | null>(null);
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = areaRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setOrigin({
-      x: ((e.clientX - rect.left)  / rect.width)  * 100,
-      y: ((e.clientY - rect.top)   / rect.height) * 100,
-    });
-  };
+  const flushZoomOrigin = useCallback(() => {
+    const area = areaRef.current;
+    if (!area) {
+      zoomFrameRef.current = null;
+      return;
+    }
+    const bounds = boundsRef.current ?? area.getBoundingClientRect();
+    boundsRef.current = bounds;
+    const x = Math.max(0, Math.min(100, ((pointerRef.current.x - bounds.left) / bounds.width) * 100));
+    const y = Math.max(0, Math.min(100, ((pointerRef.current.y - bounds.top) / bounds.height) * 100));
+    area.style.setProperty("--zoom-origin", `${x}% ${y}%`);
+    zoomFrameRef.current = null;
+  }, []);
+
+  const handleMouseEnter = useCallback(() => {
+    boundsRef.current = areaRef.current?.getBoundingClientRect() ?? null;
+    setZoomed(true);
+  }, []);
+
+  const handleMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    pointerRef.current = { x: event.clientX, y: event.clientY };
+    if (zoomFrameRef.current === null) {
+      zoomFrameRef.current = requestAnimationFrame(flushZoomOrigin);
+    }
+  }, [flushZoomOrigin]);
+
+  const handleMouseLeave = useCallback(() => {
+    if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
+    zoomFrameRef.current = null;
+    boundsRef.current = null;
+    areaRef.current?.style.setProperty("--zoom-origin", "50% 50%");
+    setZoomed(false);
+  }, []);
+
+  useEffect(() => {
+    const invalidateBounds = () => { boundsRef.current = null; };
+    window.addEventListener("resize", invalidateBounds, { passive: true });
+    return () => {
+      window.removeEventListener("resize", invalidateBounds);
+      if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
+    };
+  }, []);
 
   return (
     <div className="relative w-full h-full flex flex-col bg-zinc-950 overflow-hidden">
@@ -142,9 +178,10 @@ function PhotoViewer({ photos, phase, price, edition }: {
       {/* ── Main photo area ─────────────────────────────────────────── */}
       <div
         ref={areaRef}
+        data-testid="product-photo-area"
         className="relative flex-1 overflow-hidden"
-        onMouseEnter={() => setZoomed(true)}
-        onMouseLeave={() => { setZoomed(false); setOrigin({ x: 50, y: 50 }); }}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
         onMouseMove={handleMouseMove}
       >
         {/* Blurred background duplicate — same src, full cover, darkened */}
@@ -188,7 +225,7 @@ function PhotoViewer({ photos, phase, price, edition }: {
                 fill
                 className="object-contain object-center"
                 style={{
-                  transformOrigin: `${origin.x}% ${origin.y}%`,
+                  transformOrigin: "var(--zoom-origin, 50% 50%)",
                   transform: zoomed ? "scale(2.4)" : "scale(1)",
                   transition: zoomed
                     ? "transform 0.15s ease-out"
@@ -409,54 +446,6 @@ function BootSequence({ onDone }: { onDone: () => void }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // CUSTOM CURSOR
 // ─────────────────────────────────────────────────────────────────────────────
-function CustomCursor() {
-  const cx = useMotionValue(-100); const cy = useMotionValue(-100);
-  const tx = useMotionValue(-100); const ty = useMotionValue(-100);
-  const [clicked, setClicked] = useState(false);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      setVisible(true);
-      cx.set(e.clientX); cy.set(e.clientY);
-      animate(tx, e.clientX, { duration: 0.1, ease: "easeOut" });
-      animate(ty, e.clientY, { duration: 0.1, ease: "easeOut" });
-    };
-    const onDown  = () => { setClicked(true); setTimeout(() => setClicked(false), 120); };
-    const onLeave = () => setVisible(false);
-    const onEnter = () => setVisible(true);
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mousedown", onDown);
-    document.documentElement.addEventListener("mouseleave", onLeave);
-    document.documentElement.addEventListener("mouseenter", onEnter);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mousedown", onDown);
-      document.documentElement.removeEventListener("mouseleave", onLeave);
-      document.documentElement.removeEventListener("mouseenter", onEnter);
-    };
-  }, [cx, cy, tx, ty]);
-
-  if (!visible) return null;
-  return (
-    <>
-      <motion.div className="fixed top-0 left-0 pointer-events-none z-[9998]"
-        style={{ x: tx, y: ty, translateX: "-50%", translateY: "-50%" }}>
-        <div className="w-7 h-7 rounded-full border border-white/20" />
-      </motion.div>
-      <motion.div className="fixed top-0 left-0 pointer-events-none z-[9999]"
-        style={{ x: cx, y: cy, translateX: "-50%", translateY: "-50%" }}>
-        <motion.div animate={clicked ? { scale: 0.55 } : { scale: 1 }} transition={{ duration: 0.08 }}
-          className="relative w-[18px] h-[18px]">
-          <div className="absolute top-1/2 left-0 right-0 h-px bg-white -translate-y-1/2" />
-          <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white -translate-x-1/2" />
-          <div className="absolute top-1/2 left-1/2 w-[3px] h-[3px] bg-red-500 rounded-full -translate-x-1/2 -translate-y-1/2" />
-        </motion.div>
-      </motion.div>
-    </>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // SOLD OUT FLASH
 // ─────────────────────────────────────────────────────────────────────────────

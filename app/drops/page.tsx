@@ -3,9 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  useMotionValue, animate,
-} from "framer-motion";
+import CustomCursor from "@/components/CustomCursor";
 import SafeProductImage from "@/components/SafeProductImage";
 import { getProductPreview } from "@/lib/productImages";
 
@@ -28,7 +26,7 @@ interface DropItem {
 // ─────────────────────────────────────────────────────────────────────────────
 const GLOBAL_CSS = `
   @media (hover: hover) and (pointer: fine) {
-    * { cursor: none !important; }
+    html.custom-cursor-active * { cursor: none !important; }
   }
   .crt-overlay {
     pointer-events: none; position: fixed; inset: 0; z-index: 9990;
@@ -104,54 +102,6 @@ function useScramble(original: string) {
 // ─────────────────────────────────────────────────────────────────────────────
 // CUSTOM CURSOR
 // ─────────────────────────────────────────────────────────────────────────────
-function CustomCursor() {
-  const cx = useMotionValue(-100); const cy = useMotionValue(-100);
-  const tx = useMotionValue(-100); const ty = useMotionValue(-100);
-  const [clicked, setClicked] = useState(false);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      setVisible(true);
-      cx.set(e.clientX); cy.set(e.clientY);
-      animate(tx, e.clientX, { duration: 0.1, ease: "easeOut" });
-      animate(ty, e.clientY, { duration: 0.1, ease: "easeOut" });
-    };
-    const onDown  = () => { setClicked(true); setTimeout(() => setClicked(false), 120); };
-    const onLeave = () => setVisible(false);
-    const onEnter = () => setVisible(true);
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mousedown", onDown);
-    document.documentElement.addEventListener("mouseleave", onLeave);
-    document.documentElement.addEventListener("mouseenter", onEnter);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mousedown", onDown);
-      document.documentElement.removeEventListener("mouseleave", onLeave);
-      document.documentElement.removeEventListener("mouseenter", onEnter);
-    };
-  }, [cx, cy, tx, ty]);
-
-  if (!visible) return null;
-  return (
-    <>
-      <motion.div className="fixed top-0 left-0 pointer-events-none z-[9998]"
-        style={{ x: tx, y: ty, translateX: "-50%", translateY: "-50%" }}>
-        <div className="w-7 h-7 rounded-full border border-white/20" />
-      </motion.div>
-      <motion.div className="fixed top-0 left-0 pointer-events-none z-[9999]"
-        style={{ x: cx, y: cy, translateX: "-50%", translateY: "-50%" }}>
-        <motion.div animate={clicked ? { scale: 0.55 } : { scale: 1 }} transition={{ duration: 0.08 }}
-          className="relative w-[18px] h-[18px]">
-          <div className="absolute top-1/2 left-0 right-0 h-px bg-white -translate-y-1/2" />
-          <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white -translate-x-1/2" />
-          <div className="absolute top-1/2 left-1/2 w-[3px] h-[3px] bg-red-500 rounded-full -translate-x-1/2 -translate-y-1/2" />
-        </motion.div>
-      </motion.div>
-    </>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // DROP ROW
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,7 +126,6 @@ function DropRow({ drop, index, isHovered, onHover, onLeave, onClick }: {
       onBlur={onLeave}
       onClick={onClick}
       className="group block w-full border-b border-zinc-800 text-left last:border-0"
-      style={{ cursor: "none" }}
     >
       <div className="flex items-center gap-3 sm:gap-6 px-4 sm:px-8 py-5 relative">
 
