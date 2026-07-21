@@ -50,13 +50,13 @@ The API connects to PostgreSQL and Redis through Toxiproxy. The runner disables 
 
 ## Reference baseline
 
-The first CI baseline for this implementation is recorded from the PR workflow below. Values are taken from k6 summary artifacts, not estimated from application logs.
+The first CI baseline was recorded on 21 July 2026 by GitHub Actions `ubuntu-24.04` in [workflow run 29828706918](https://github.com/yngnoise/doomsday/actions/runs/29828706918). Values are taken from its k6 JSON summary artifacts, not estimated from application logs. All checks, both dependency recovery experiments, and every post-scenario invariant check passed.
 
 | Scenario | Requests / flows | HTTP p95 | Error rate | Scenario-specific result |
 | --- | ---: | ---: | ---: | --- |
-| Drop opening | Pending first CI run | — | — | — |
-| Contention | Pending first CI run | — | — | No invariant violations required |
-| Checkout | Pending first CI run | — | — | Completion p95 pending |
-| SSE | Pending first CI run | — | — | First-event p95 pending |
+| Drop opening | 1,004 requests | 2.12 ms | 0% | 501 iterations at 25 arrivals/second |
+| Contention | 180 attempts | 115.26 ms | 0% | All outcomes safe; no invariant violations |
+| Checkout | 12 completed flows | 22.27 ms | 0% | Completion p95 5.56 s; 12/12 paid |
+| SSE | 20 subscribers + 20 publishers | 33.66 ms non-streaming | 0% | 20/20 received an event; first-event p95 2.03 s |
 
 Hosted CI numbers are a regression baseline for this repository, not a capacity promise. Re-run the suite on production-like infrastructure before making sizing or SLO decisions.
