@@ -98,7 +98,7 @@ func (h *OTPHandler) RequestOTP(w http.ResponseWriter, r *http.Request) {
 	if !DemoModeEnabled() {
 		h.mailer.SendOTP(ctx, req.Email, code)
 	}
-	h.logger.Info("OTP issued", slog.String("email", req.Email))
+	h.logger.InfoContext(ctx, "OTP issued")
 
 	// Return masked email so frontend can display "Sent to a***@gmail.com"
 	response := map[string]any{
@@ -206,7 +206,7 @@ func (h *OTPHandler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 
 	h.resetOTPEmailRateLimit(ctx, req.Email)
 
-	h.logger.Info("OTP verified", slog.String("email", req.Email))
+	h.logger.InfoContext(ctx, "OTP verified")
 	writeJSON(w, http.StatusOK, map[string]string{
 		"token": token,
 		"email": req.Email,
