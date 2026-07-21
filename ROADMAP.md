@@ -44,7 +44,7 @@ Progress is tracked in the umbrella issue [#27](https://github.com/yngnoise/doom
   - Add structured logs, correlation IDs, metrics, and traces
   - Separate liveness, readiness, and dependency health
   - Ensure telemetry never exposes secrets, OTP codes, or personal data
-- [ ] [Validate concurrency and resilience with load and failure testing](https://github.com/yngnoise/doomsday/issues/24)
+- [x] [Validate concurrency and resilience with load and failure testing](https://github.com/yngnoise/doomsday/issues/24)
   - Add k6 contention, checkout, and SSE scenarios
   - Verify stock and order invariants after every run
   - Demonstrate recovery from temporary PostgreSQL and Redis failures

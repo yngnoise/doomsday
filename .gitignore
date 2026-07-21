@@ -17,6 +17,7 @@
 /blob-report/
 /.cache/
 /lighthouse-report.html
+/loadtest/results/
 
 # next.js
 /.next/

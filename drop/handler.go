@@ -98,7 +98,7 @@ func (h *Handler) initStock(ctx context.Context) error {
 		SELECT d.id,
 			d.total_stock - COALESCE(
 				(SELECT COUNT(*) FROM reservations r
-				 WHERE r.drop_id = d.id AND r.status IN ('pending','completed')), 0
+				 WHERE r.drop_id = d.id AND r.status IN ('pending','expiring','completed')), 0
 			) AS remaining
 		FROM drops d WHERE d.ends_at > NOW()
 	`)
@@ -112,14 +112,16 @@ func (h *Handler) initStock(ctx context.Context) error {
 		if err := rows.Scan(&id, &remaining); err != nil {
 			continue
 		}
-		h.redis.SetNX(ctx, fmt.Sprintf("drop:%s:stock", id), remaining, 0)
+		if err := h.redis.SetNX(ctx, fmt.Sprintf("drop:%s:stock", id), remaining, 0).Err(); err != nil {
+			return fmt.Errorf("seed total stock for %s: %w", id, err)
+		}
 
 		// Seed per-size stock
 		sizeRows, err := h.db.Query(ctx, `
 			SELECT ds.label,
 				ds.stock - COALESCE(
 					(SELECT COUNT(*) FROM reservations r
-					 WHERE r.drop_id = ds.drop_id AND r.size = ds.label AND r.status IN ('pending','completed')), 0
+					 WHERE r.drop_id = ds.drop_id AND r.size = ds.label AND r.status IN ('pending','expiring','completed')), 0
 				) AS remaining
 			FROM drop_sizes ds WHERE ds.drop_id = $1
 		`, id)
@@ -134,13 +136,41 @@ func (h *Handler) initStock(ctx context.Context) error {
 				continue
 			}
 			key := fmt.Sprintf("drop:%s:size:%s:stock", id, label)
-			h.redis.SetNX(ctx, key, sizeRemaining, 0)
+			if err := h.redis.SetNX(ctx, key, sizeRemaining, 0).Err(); err != nil {
+				sizeRows.Close()
+				return fmt.Errorf("seed size stock for %s/%s: %w", id, label, err)
+			}
 			h.logger.InfoContext(ctx, "size stock initialized",
 				slog.String("drop", id), slog.String("size", label), slog.Int64("remaining", sizeRemaining))
 		}
 		sizeRows.Close()
+
+		reservationRows, err := h.db.Query(ctx, `
+			SELECT user_id, id FROM reservations
+			WHERE drop_id = $1 AND status IN ('pending','expiring','completed')
+		`, id)
+		if err != nil {
+			return fmt.Errorf("query reservation markers for %s: %w", id, err)
+		}
+		markerKey := fmt.Sprintf("drop:%s:reservations", id)
+		for reservationRows.Next() {
+			var userID, reservationID string
+			if err := reservationRows.Scan(&userID, &reservationID); err != nil {
+				reservationRows.Close()
+				return fmt.Errorf("scan reservation marker for %s: %w", id, err)
+			}
+			if err := h.redis.HSetNX(ctx, markerKey, userID, reservationID).Err(); err != nil {
+				reservationRows.Close()
+				return fmt.Errorf("seed reservation marker for %s: %w", id, err)
+			}
+		}
+		if err := reservationRows.Err(); err != nil {
+			reservationRows.Close()
+			return fmt.Errorf("iterate reservation markers for %s: %w", id, err)
+		}
+		reservationRows.Close()
 	}
-	return nil
+	return rows.Err()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
