@@ -100,6 +100,7 @@ Payment events have deterministic IDs, webhook inserts are conflict-safe, and th
 | Multiple schedulers restore stock once | `SKIP LOCKED`, an `expiring` state, and idempotent Redis release | [Scheduler integration test](drop/integration_test.go) |
 | Critical customer paths work end to end | Real Go, PostgreSQL, Redis, Next.js, and Chromium in CI | [Playwright journeys](e2e/critical-journeys.spec.ts), [CI workflow](.github/workflows/ci.yml) |
 | Core pages meet the automated accessibility baseline | Desktop and Pixel 5 axe scans, keyboard and focus assertions | [Accessibility tests](e2e/accessibility.spec.ts), [audit notes](docs/accessibility.md) |
+| Requests and durable jobs remain diagnosable without leaking customer data | JSON logs, correlation IDs, bounded Prometheus labels, OpenTelemetry context in the outbox | [Observability tests](drop/observability_test.go), [operations guide](docs/observability.md) |
 
 The current Lighthouse baseline is Accessibility 100, Best Practices 100, SEO 100, Performance 66, CLS 0, and LCP 3.3 seconds on a local production build. Measurement details and reproduction steps are in [docs/accessibility.md](docs/accessibility.md).
 
@@ -108,7 +109,7 @@ The current Lighthouse baseline is Accessibility 100, Best Practices 100, SEO 10
 | Layer | Stack |
 | --- | --- |
 | Web | Next.js 16, React 19, TypeScript, Tailwind CSS, Framer Motion |
-| API | Go 1.25, `net/http`, pgx |
+| API | Go 1.25, `net/http`, pgx, OpenTelemetry, Prometheus |
 | Data | PostgreSQL 16, Redis 7 |
 | Authentication | Email OTP, HMAC hashing, JWT |
 | Async work | PostgreSQL transactional outbox |
@@ -178,7 +179,9 @@ go run .
 npm run dev
 ```
 
-The storefront is available at `http://localhost:3000`; the API listens on `http://localhost:8080`. SMTP is optional for local development. When it is omitted, OTP delivery is logged by the API instead of sent.
+The storefront is available at `http://localhost:3000`; the API listens on `http://localhost:8080`. SMTP is optional in demo and test environments. When it is omitted, delivery is skipped and the OTP is never written to logs; demo/test codes are supplied through their explicit environment variables.
+
+Operational endpoints are exposed at `/health/live`, `/health/ready`, `/health/dependencies`, and `/metrics`. JSON log fields, metric names, trace export, and privacy rules are documented in [docs/observability.md](docs/observability.md).
 
 ## Verification
 
@@ -222,7 +225,7 @@ CI runs Go tests, vet, vulnerability scanning, frontend build, dependency audit,
 - Checkout never accepts card numbers or payment tokens.
 - Demo mode disables SMTP and refuses destructive reset behavior unless explicitly enabled.
 - Credentials belong in environment variables and are excluded from version control.
-- The no-SMTP development fallback logs OTP codes for local testing; it must not be used as a production delivery path. Telemetry redaction is tracked in [issue #23](https://github.com/yngnoise/doomsday/issues/23).
+- Structured telemetry excludes OTP codes, credentials, authorization values, email addresses, user IDs, customer names, and shipping addresses.
 
 This is a portfolio system, not a PCI-compliant commerce platform.
 
@@ -230,7 +233,6 @@ This is a portfolio system, not a PCI-compliant commerce platform.
 
 - There is no real acquirer, tax calculation, shipping integration, fulfillment, returns, or customer support workflow.
 - The public Render URL is not yet published; free-tier PostgreSQL and web services are not durable production infrastructure.
-- OpenTelemetry traces and product-level metrics are planned in [issue #23](https://github.com/yngnoise/doomsday/issues/23).
 - Formal load and dependency-failure reports are planned in [issue #24](https://github.com/yngnoise/doomsday/issues/24).
 - Admin and live-drop operational UX is still being expanded in [issue #25](https://github.com/yngnoise/doomsday/issues/25).
 - Automated accessibility checks do not replace manual screen-reader, zoom, and assistive-technology testing.

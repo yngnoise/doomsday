@@ -64,7 +64,7 @@ func (m *Mailer) Enabled() bool {
 
 func (m *Mailer) send(ctx context.Context, to, subject, html string, idempotencyKey ...string) error {
 	if !m.Enabled() {
-		m.logger.InfoContext(ctx, "email skipped (SMTP not configured)", slog.String("to", to))
+		m.logger.InfoContext(ctx, "email skipped (SMTP not configured)")
 		return nil
 	}
 
@@ -275,10 +275,10 @@ func emailAlert(text, color string) string {
 
 func (m *Mailer) SendOTP(ctx context.Context, to, code string) {
 	if !m.Enabled() {
-		m.logger.WarnContext(ctx, "SMTP not configured — OTP code (dev mode)",
-			slog.String("to", to), slog.String("code", code))
+		m.logger.WarnContext(ctx, "SMTP not configured; OTP email skipped")
 		return
 	}
+	backgroundCtx := context.WithoutCancel(ctx)
 	go func() {
 		digits := ""
 		for i, ch := range code {
@@ -330,10 +330,10 @@ func (m *Mailer) SendOTP(ctx context.Context, to, code string) {
 			requestedAt, to,
 		)
 
-		if err := m.send(context.Background(), to,
+		if err := m.send(backgroundCtx, to,
 			"DOOMSDAY: ваш код подтверждения",
 			emailBase("Access Code", content)); err != nil {
-			m.logger.Error("OTP email failed", slog.String("to", to), slog.Any("err", err))
+			m.logger.ErrorContext(backgroundCtx, "OTP email failed", slog.Any("err", err))
 		}
 	}()
 }
@@ -363,7 +363,7 @@ func (m *Mailer) SendReservationConfirmation(ctx context.Context, to, name, item
 	if err := m.send(ctx, to,
 		"Item secured — complete checkout now",
 		emailBase("Reservation Confirmed", content), idempotencyKey...); err != nil {
-		m.logger.ErrorContext(ctx, "reservation email failed", slog.String("to", to), slog.Any("err", err))
+		m.logger.ErrorContext(ctx, "reservation email failed", slog.Any("err", err))
 		return err
 	}
 	return nil
@@ -396,7 +396,7 @@ func (m *Mailer) SendOrderConfirmation(ctx context.Context, to, name, itemName, 
 	if err := m.send(ctx, to,
 		fmt.Sprintf("Order %s confirmed — DOOMSDAY", orderID),
 		emailBase("Order Confirmation", content), idempotencyKey...); err != nil {
-		m.logger.ErrorContext(ctx, "order email failed", slog.String("to", to), slog.Any("err", err))
+		m.logger.ErrorContext(ctx, "order email failed", slog.Any("err", err))
 		return err
 	}
 	return nil
@@ -409,7 +409,7 @@ func (m *Mailer) SendOrderConfirmation(ctx context.Context, to, name, itemName, 
 func (m *Mailer) SendWaitlistPromotion(ctx context.Context, to, dropID, dropName string, idempotencyKey ...string) error {
 	if !m.Enabled() {
 		err := fmt.Errorf("SMTP is not configured")
-		m.logger.WarnContext(ctx, "waitlist email not scheduled", slog.String("to", to), slog.Any("err", err))
+		m.logger.WarnContext(ctx, "waitlist email not scheduled", slog.Any("err", err))
 		return err
 	}
 
@@ -431,7 +431,7 @@ func (m *Mailer) SendWaitlistPromotion(ctx context.Context, to, dropID, dropName
 	if err := m.send(ctx, to,
 		"Your waitlist slot is open — "+dropName,
 		emailBase("Waitlist Notification", content), idempotencyKey...); err != nil {
-		m.logger.ErrorContext(ctx, "waitlist email failed", slog.String("to", to), slog.Any("err", err))
+		m.logger.ErrorContext(ctx, "waitlist email failed", slog.Any("err", err))
 		return err
 	}
 	return nil

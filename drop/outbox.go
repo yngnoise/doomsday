@@ -11,6 +11,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -33,18 +38,29 @@ type outboxJob struct {
 	Payload        json.RawMessage
 	Attempts       int
 	MaxAttempts    int
+	CorrelationID  string
+	TraceParent    string
+	TraceState     string
 }
 
 func enqueueOutboxJob(ctx context.Context, executor pgx.Tx, jobType, idempotencyKey string, payload any) error {
+	ctx, correlationID := ensureCorrelationID(ctx)
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("encode outbox payload: %w", err)
 	}
 	_, err = executor.Exec(ctx, `
-		INSERT INTO outbox_jobs (job_type, idempotency_key, payload, max_attempts)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO outbox_jobs (
+			job_type, idempotency_key, payload, max_attempts,
+			correlation_id, trace_parent, trace_state
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (idempotency_key) DO NOTHING
-	`, jobType, idempotencyKey, encoded, outboxDefaultMaxAttempts)
+	`, jobType, idempotencyKey, encoded, outboxDefaultMaxAttempts,
+		correlationID, carrier.Get("traceparent"), carrier.Get("tracestate"),
+	)
 	if err != nil {
 		return fmt.Errorf("enqueue outbox job %q: %w", idempotencyKey, err)
 	}
@@ -64,11 +80,12 @@ type OutboxWorker struct {
 	leaseDuration  time.Duration
 	initialBackoff time.Duration
 	maximumBackoff time.Duration
+	telemetry      *Telemetry
 	wg             sync.WaitGroup
 }
 
-func NewOutboxWorker(db *pgxpool.Pool, dispatcher outboxDispatcher, logger *slog.Logger) *OutboxWorker {
-	return &OutboxWorker{
+func NewOutboxWorker(db *pgxpool.Pool, dispatcher outboxDispatcher, logger *slog.Logger, telemetry ...*Telemetry) *OutboxWorker {
+	worker := &OutboxWorker{
 		db:             db,
 		dispatcher:     dispatcher,
 		logger:         logger,
@@ -78,6 +95,10 @@ func NewOutboxWorker(db *pgxpool.Pool, dispatcher outboxDispatcher, logger *slog
 		initialBackoff: outboxDefaultInitialBackoff,
 		maximumBackoff: outboxDefaultMaximumBackoff,
 	}
+	if len(telemetry) > 0 {
+		worker.telemetry = telemetry[0]
+	}
+	return worker
 }
 
 func (w *OutboxWorker) Start(ctx context.Context) {
@@ -114,15 +135,40 @@ func (w *OutboxWorker) ProcessOne(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	if err := w.dispatcher.Dispatch(ctx, job); err != nil {
-		if markErr := w.markFailed(ctx, job, err); markErr != nil {
+	dispatchCtx := otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier{
+		"traceparent": job.TraceParent,
+		"tracestate":  job.TraceState,
+	})
+	dispatchCtx = ContextWithCorrelationID(dispatchCtx, job.CorrelationID)
+	dispatchCtx, span := otel.Tracer(instrumentationName).Start(
+		dispatchCtx,
+		"outbox "+job.Type,
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.String("messaging.operation.type", "process"),
+			attribute.String("messaging.destination.name", job.Type),
+			attribute.Int("messaging.message.delivery_count", job.Attempts),
+		),
+	)
+	defer span.End()
+	if job.Attempts > 1 {
+		w.telemetry.RecordOutbox(job.Type, "recovered")
+	}
+
+	if err := w.dispatcher.Dispatch(dispatchCtx, job); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "job dispatch failed")
+		if markErr := w.markFailed(dispatchCtx, job, err); markErr != nil {
 			return true, fmt.Errorf("dispatch %s: %v; record failure: %w", job.ID, err, markErr)
 		}
 		return true, nil
 	}
-	if err := w.markCompleted(ctx, job.ID); err != nil {
+	if err := w.markCompleted(dispatchCtx, job.ID); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "job completion failed")
 		return true, err
 	}
+	w.telemetry.RecordOutbox(job.Type, "completed")
 	return true, nil
 }
 
@@ -144,9 +190,11 @@ func (w *OutboxWorker) claim(ctx context.Context) (outboxJob, bool, error) {
 		FROM candidate
 		WHERE job.id = candidate.id
 		RETURNING job.id, job.job_type, job.idempotency_key, job.payload,
-			job.attempts, job.max_attempts
+			job.attempts, job.max_attempts, job.correlation_id,
+			job.trace_parent, job.trace_state
 	`, w.workerID, w.leaseDuration.Milliseconds()).Scan(
 		&job.ID, &job.Type, &job.IdempotencyKey, &job.Payload, &job.Attempts, &job.MaxAttempts,
+		&job.CorrelationID, &job.TraceParent, &job.TraceState,
 	)
 	if err == pgx.ErrNoRows {
 		return outboxJob{}, false, nil
@@ -180,6 +228,11 @@ func (w *OutboxWorker) markFailed(ctx context.Context, job outboxJob, dispatchEr
 		status = "dead"
 		availableAt = time.Now().UTC()
 	}
+	metricOutcome := "retry"
+	if status == "dead" {
+		metricOutcome = "dead"
+	}
+	w.telemetry.RecordOutbox(job.Type, metricOutcome)
 	result, err := w.db.Exec(ctx, `
 		UPDATE outbox_jobs
 		SET status = $3, available_at = $4, locked_at = NULL, locked_by = NULL,

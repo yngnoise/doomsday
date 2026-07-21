@@ -14,18 +14,26 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type recordingOutboxDispatcher struct {
-	mu    sync.Mutex
-	calls int
-	err   error
+	mu            sync.Mutex
+	calls         int
+	err           error
+	correlationID string
+	traceValid    bool
 }
 
-func (d *recordingOutboxDispatcher) Dispatch(context.Context, outboxJob) error {
+func (d *recordingOutboxDispatcher) Dispatch(ctx context.Context, _ outboxJob) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.calls++
+	d.correlationID = CorrelationIDFromContext(ctx)
+	d.traceValid = trace.SpanContextFromContext(ctx).IsValid()
 	return d.err
 }
 
@@ -153,6 +161,51 @@ func TestOutboxWorkerIntegration(t *testing.T) {
 		}
 		if status != "completed" || attempts != 2 || dispatcher.callCount() != 1 {
 			t.Fatalf("status=%q attempts=%d calls=%d", status, attempts, dispatcher.callCount())
+		}
+	})
+
+	t.Run("trace and correlation context survive the transaction boundary", func(t *testing.T) {
+		provider := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+		previousProvider := otel.GetTracerProvider()
+		previousPropagator := otel.GetTextMapPropagator()
+		otel.SetTracerProvider(provider)
+		otel.SetTextMapPropagator(propagation.TraceContext{})
+		t.Cleanup(func() {
+			otel.SetTracerProvider(previousProvider)
+			otel.SetTextMapPropagator(previousPropagator)
+			_ = provider.Shutdown(context.Background())
+		})
+
+		key := "trace-" + suffix
+		parentCtx, parentSpan := otel.Tracer("integration-test").Start(ctx, "request")
+		parentCtx = ContextWithCorrelationID(parentCtx, "checkout-correlation")
+		tx, err := db.Begin(parentCtx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := enqueueOutboxJob(parentCtx, tx, outboxJobOrderEmail, key, map[string]string{"value": "safe"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(parentCtx); err != nil {
+			t.Fatal(err)
+		}
+		parentSpan.End()
+
+		var correlationID, traceParent string
+		if err := db.QueryRow(ctx, `SELECT correlation_id, trace_parent FROM outbox_jobs WHERE idempotency_key=$1`, key).Scan(&correlationID, &traceParent); err != nil {
+			t.Fatal(err)
+		}
+		if correlationID != "checkout-correlation" || traceParent == "" {
+			t.Fatalf("correlation=%q traceparent=%q", correlationID, traceParent)
+		}
+
+		dispatcher := &recordingOutboxDispatcher{}
+		worker := NewOutboxWorker(db, dispatcher, logger)
+		if processed, err := worker.ProcessOne(ctx); err != nil || !processed {
+			t.Fatalf("processed=%v err=%v", processed, err)
+		}
+		if dispatcher.correlationID != "checkout-correlation" || !dispatcher.traceValid {
+			t.Fatalf("correlation=%q trace_valid=%v", dispatcher.correlationID, dispatcher.traceValid)
 		}
 	})
 }

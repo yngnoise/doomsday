@@ -68,6 +68,11 @@ type Handler struct {
 	mailer               *Mailer
 	logger               *slog.Logger
 	paymentWebhookSecret string
+	telemetry            *Telemetry
+}
+
+func (h *Handler) SetTelemetry(telemetry *Telemetry) {
+	h.telemetry = telemetry
 }
 
 func NewHandler(ctx context.Context, rdb *redis.Client, db *pgxpool.Pool, hub *Hub, mailer *Mailer, logger *slog.Logger, paymentWebhookSecret ...string) (*Handler, error) {
@@ -308,6 +313,8 @@ type ReserveResponse struct {
 
 func (h *Handler) ReserveItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	outcome := "invalid"
+	defer func() { h.telemetry.RecordReservation(outcome) }()
 	var req ReserveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -323,20 +330,24 @@ func (h *Handler) ReserveItem(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, ok := userIDFromContext(ctx)
 	if !ok {
+		outcome = "unauthenticated"
 		writeError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	d, err := h.fetchDrop(ctx, req.DropID)
 	if err != nil {
+		outcome = "not_live"
 		writeError(w, http.StatusNotFound, "drop not found")
 		return
 	}
 	now := time.Now().UTC()
 	if now.Before(d.StartsAt) {
+		outcome = "not_live"
 		writeError(w, http.StatusConflict, "drop has not started")
 		return
 	}
 	if now.After(d.EndsAt) {
+		outcome = "not_live"
 		writeError(w, http.StatusGone, "drop has ended")
 		return
 	}
@@ -344,15 +355,18 @@ func (h *Handler) ReserveItem(w http.ResponseWriter, r *http.Request) {
 	reservationID := uuid.NewString()
 	code, totalLeft, err := h.reserveInRedis(ctx, req.DropID, req.Size, userID, reservationID)
 	if err != nil {
+		outcome = "dependency_error"
 		h.logger.ErrorContext(ctx, "redis reserve", slog.Any("err", err))
 		writeError(w, http.StatusServiceUnavailable, "try again shortly")
 		return
 	}
 	switch code {
 	case -3:
+		outcome = "rate_limited"
 		writeError(w, http.StatusTooManyRequests, "too many attempts")
 		return
 	case -2:
+		outcome = "duplicate"
 		// User already has an active reservation — return it so the frontend can redirect
 		var existID string
 		var existExpires time.Time
@@ -372,6 +386,7 @@ func (h *Handler) ReserveItem(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "already reserved by this user")
 		return
 	case -1:
+		outcome = "sold_out"
 		writeError(w, http.StatusGone, fmt.Sprintf("size %s is sold out", req.Size))
 		return
 	}
@@ -385,6 +400,7 @@ func (h *Handler) ReserveItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.persistReservation(ctx, reservationID, req.DropID, req.ItemID, userID, req.Size, expiresAt, confirmation); err != nil {
+		outcome = "dependency_error"
 		h.logger.ErrorContext(ctx, "reservation persistence failed",
 			slog.String("reservation", reservationID),
 			slog.Any("err", err),
@@ -414,6 +430,7 @@ func (h *Handler) ReserveItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.hub.Broadcast(req.DropID, totalLeft)
+	outcome = "created"
 
 	writeJSON(w, http.StatusCreated, ReserveResponse{
 		ReservationID: reservationID,
@@ -575,9 +592,8 @@ func (h *Handler) CompleteCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.Info("order completed",
+	h.logger.InfoContext(ctx, "order completed",
 		slog.String("order", orderID),
-		slog.String("user", userID),
 		slog.String("size", size),
 	)
 

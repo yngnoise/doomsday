@@ -16,6 +16,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const paymentSignatureHeader = "X-Doomsday-Signature"
@@ -64,6 +68,8 @@ type paymentEvent struct {
 // signed asynchronous event. A client response can never complete an order.
 func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	scenario, outcome := "unknown", "rejected"
+	defer func() { h.telemetry.RecordPayment(scenario, outcome) }()
 	reservationID := r.PathValue("reservationID")
 	userID, ok := userIDFromContext(ctx)
 	if !ok {
@@ -81,6 +87,7 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	scenario = req.Scenario
 
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
@@ -115,6 +122,7 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not load payment")
 			return
 		}
+		outcome = "duplicate"
 		writeJSON(w, http.StatusOK, existing)
 		return
 	}
@@ -147,6 +155,7 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	outcome = "created"
 	writeJSON(w, http.StatusAccepted, paymentResponse{
 		PaymentID: paymentID, Status: "pending", Scenario: req.Scenario,
 		AmountCents: priceCents, Currency: "USD",
@@ -253,7 +262,17 @@ func (h *Handler) PaymentWebhook(w http.ResponseWriter, r *http.Request) {
 
 var errInvalidPaymentSignature = errors.New("invalid payment signature")
 
-func (h *Handler) processPaymentWebhook(ctx context.Context, body []byte, signature string) error {
+func (h *Handler) processPaymentWebhook(ctx context.Context, body []byte, signature string) (returnedErr error) {
+	eventType, webhookOutcome := "unknown", "rejected"
+	ctx, span := otel.Tracer(instrumentationName).Start(ctx, "payment.webhook", trace.WithSpanKind(trace.SpanKindConsumer))
+	defer func() {
+		h.telemetry.RecordWebhook(eventType, webhookOutcome)
+		if returnedErr != nil {
+			span.RecordError(returnedErr)
+			span.SetStatus(codes.Error, "payment webhook rejected")
+		}
+		span.End()
+	}()
 	if !verifyPaymentSignature(h.paymentWebhookSecret, body, signature) {
 		return errInvalidPaymentSignature
 	}
@@ -264,6 +283,8 @@ func (h *Handler) processPaymentWebhook(ctx context.Context, body []byte, signat
 	if event.ID == "" || event.PaymentID == "" || event.Type == "" {
 		return errors.New("payment event fields are required")
 	}
+	eventType = event.Type
+	span.SetAttributes(attribute.String("payment.event_type", boundedWebhookType(event.Type)))
 
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
@@ -280,15 +301,19 @@ func (h *Handler) processPaymentWebhook(ctx context.Context, body []byte, signat
 		return fmt.Errorf("persisting payment event: %w", err)
 	}
 	if result.RowsAffected() == 0 {
-		return tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		webhookOutcome = "duplicate"
+		return nil
 	}
 
-	var status, reservationID, reservationStatus, dropID, itemID, userID, size string
+	var status, scenario, reservationID, reservationStatus, dropID, itemID, userID, size string
 	var email, customerName, address, dropName string
 	var expiresAt time.Time
 	var amountCents int
 	if err := tx.QueryRow(ctx, `
-		SELECT p.status, p.reservation_id, p.user_id, p.email, p.customer_name,
+		SELECT p.status, p.scenario, p.reservation_id, p.user_id, p.email, p.customer_name,
 		       p.address, p.amount_cents, r.status, r.expires_at, r.drop_id,
 		       r.item_id, r.size, d.name
 		FROM payments p
@@ -297,19 +322,22 @@ func (h *Handler) processPaymentWebhook(ctx context.Context, body []byte, signat
 		WHERE p.id = $1
 		FOR UPDATE OF p, r
 	`, event.PaymentID).Scan(
-		&status, &reservationID, &userID, &email, &customerName, &address,
+		&status, &scenario, &reservationID, &userID, &email, &customerName, &address,
 		&amountCents, &reservationStatus, &expiresAt, &dropID, &itemID, &size, &dropName,
 	); err != nil {
 		return fmt.Errorf("loading payment: %w", err)
 	}
 
 	var orderID string
+	paymentOutcome := "unknown"
 	switch event.Type {
 	case "payment.processing":
+		paymentOutcome = "processing"
 		if status == "pending" {
 			_, err = tx.Exec(ctx, `UPDATE payments SET status='processing', updated_at=NOW() WHERE id=$1`, event.PaymentID)
 		}
 	case "payment.succeeded":
+		paymentOutcome = "paid"
 		if status == "paid" || status == "refunded" {
 			break
 		}
@@ -317,6 +345,7 @@ func (h *Handler) processPaymentWebhook(ctx context.Context, body []byte, signat
 			return errors.New("failed payment cannot succeed")
 		}
 		if reservationStatus != "pending" || time.Now().After(expiresAt) {
+			paymentOutcome = "failed"
 			_, err = tx.Exec(ctx, `UPDATE payments SET status='failed', failure_code='reservation_expired', updated_at=NOW() WHERE id=$1`, event.PaymentID)
 			break
 		}
@@ -341,11 +370,13 @@ func (h *Handler) processPaymentWebhook(ctx context.Context, body []byte, signat
 			return err
 		}
 	case "payment.declined", "payment.cancelled", "payment.timed_out":
+		paymentOutcome = "failed"
 		if status == "pending" || status == "processing" {
 			failureCode := strings.TrimPrefix(event.Type, "payment.")
 			_, err = tx.Exec(ctx, `UPDATE payments SET status='failed', failure_code=$2, updated_at=NOW() WHERE id=$1`, event.PaymentID, failureCode)
 		}
 	case "payment.refunded":
+		paymentOutcome = "refunded"
 		if status != "paid" && status != "refunded" {
 			return errors.New("only a paid payment can be refunded")
 		}
@@ -364,6 +395,8 @@ func (h *Handler) processPaymentWebhook(ctx context.Context, body []byte, signat
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	webhookOutcome = "processed"
+	h.telemetry.RecordPayment(scenario, paymentOutcome)
 	return nil
 }
 

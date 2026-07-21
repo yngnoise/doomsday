@@ -40,7 +40,7 @@ Progress is tracked in the umbrella issue [#27](https://github.com/yngnoise/doom
   - Persist asynchronous jobs with business transactions
   - Add retries, exponential backoff, idempotency keys, and dead-letter handling
   - Make scheduled reservation expiry safe across multiple instances
-- [ ] [Add production-grade observability and health checks](https://github.com/yngnoise/doomsday/issues/23)
+- [x] [Add production-grade observability and health checks](https://github.com/yngnoise/doomsday/issues/23)
   - Add structured logs, correlation IDs, metrics, and traces
   - Separate liveness, readiness, and dependency health
   - Ensure telemetry never exposes secrets, OTP codes, or personal data

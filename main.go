@@ -27,7 +27,18 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logger := drop.NewStructuredLogger(os.Stdout)
+	telemetry, shutdownTelemetry, err := drop.NewTelemetry(ctx, logger)
+	if err != nil {
+		log.Fatalf("telemetry: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(shutdownCtx); err != nil {
+			logger.Error("telemetry shutdown failed", slog.Any("err", err))
+		}
+	}()
 
 	// ── Redis ──────────────────────────────────────────────────────────────
 	redisURL := os.Getenv("REDIS_URL")
@@ -79,8 +90,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("handler: %v", err)
 	}
+	h.SetTelemetry(telemetry)
 	dispatcher := drop.NewApplicationJobDispatcher(db, rdb, hub, mailer, logger, h)
-	worker := drop.NewOutboxWorker(db, dispatcher, logger)
+	worker := drop.NewOutboxWorker(db, dispatcher, logger, telemetry)
 	worker.Start(ctx)
 	sched := drop.NewScheduler(db, logger)
 	sched.Start(ctx)
@@ -109,6 +121,11 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	})
+	mux.Handle("GET /health/dependencies", drop.NewDependencyHealthHandler(
+		func(ctx context.Context) error { return db.Ping(ctx) },
+		func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
+	))
+	mux.Handle("GET /metrics", telemetry.Handler())
 
 	// Public
 	mux.HandleFunc("GET /api/auth/guest", drop.WithCORS(h.GuestToken))
@@ -147,7 +164,7 @@ func main() {
 	}
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           mux,
+		Handler:           drop.ObservabilityMiddleware(logger, telemetry)(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}

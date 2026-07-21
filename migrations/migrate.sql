@@ -5,3 +5,4 @@
 \ir 003_orders.sql
 \ir 004_payments.sql
 \ir 005_outbox.sql
+\ir 006_observability.sql
