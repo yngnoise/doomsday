@@ -46,6 +46,15 @@ const GLOBAL_CSS = `
     content: ''; position: absolute; inset: 0;
     background: radial-gradient(ellipse at center, transparent 58%, rgba(0,0,0,0.6) 100%);
   }
+  @keyframes ticker-scroll {
+    from { transform: translate3d(0, 0, 0); }
+    to { transform: translate3d(-50%, 0, 0); }
+  }
+  .ticker-track { animation: ticker-scroll 28s linear infinite; }
+  @media (max-width: 640px), (prefers-reduced-motion: reduce) {
+    .crt-overlay::after { display: none; }
+    .ticker-track { animation: none; }
+  }
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -171,21 +180,10 @@ function PhotoViewer({ photos, phase, price, edition }: {
         onMouseMove={handleMouseMove}
       >
         {/* Blurred background duplicate — same src, full cover, darkened */}
-        {PHOTOS.map((src, i) => (
-          <div key={`bg-${src}`}
-            className="absolute inset-0 transition-opacity duration-300"
-            style={{ opacity: i === active ? 1 : 0 }}>
-            <SafeProductImage
-              src={src}
-              alt=""
-              aria-hidden
-              fill
-              className="object-cover object-center scale-110"
-              style={{ filter: "blur(24px) brightness(0.25) saturate(0.6)" }}
-              sizes="55vw"
-            />
-          </div>
-        ))}
+        <div
+          aria-hidden
+          className="absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(113,113,122,0.2),transparent_45%),linear-gradient(145deg,#18181b_0%,#09090b_58%,#000_100%)]"
+        />
 
         {/* Ghost number */}
         <div aria-hidden className="absolute inset-0 flex items-center justify-center select-none pointer-events-none z-[1]">
@@ -201,13 +199,10 @@ function PhotoViewer({ photos, phase, price, edition }: {
 
         {/* Main photos — object-contain, zoom on the img itself via transform-origin */}
         <div className="absolute inset-0 z-[3] flex items-center justify-center">
-          {PHOTOS.map((src, i) => (
-            <div key={src}
-              className="absolute inset-0"
-              style={{ opacity: i === active ? 1 : 0 }}>
+          <div key={PHOTOS[active]} className="absolute inset-0">
               <SafeProductImage
-                src={src}
-                alt={`Product photo ${i + 1}`}
+                src={PHOTOS[active]}
+                alt={`Product photo ${active + 1}`}
                 fill
                 className="object-contain object-center"
                 style={{
@@ -219,11 +214,11 @@ function PhotoViewer({ photos, phase, price, edition }: {
                   willChange: "transform",
                 }}
                 sizes="(max-width: 1024px) 100vw, 55vw"
-                priority={i === 0}
+                loading={active === 0 ? "eager" : "lazy"}
+                fetchPriority={active === 0 ? "high" : "auto"}
                 draggable={false}
               />
-            </div>
-          ))}
+          </div>
         </div>
 
         {/* Corner marks */}
@@ -234,11 +229,7 @@ function PhotoViewer({ photos, phase, price, edition }: {
 
         {/* Status pill */}
         <div className="absolute top-5 left-5 z-[5] flex items-center gap-2 border border-zinc-600 bg-black/70 px-3 py-1.5 backdrop-blur-sm">
-          <motion.div
-            animate={{ opacity: phase === "live" ? [1, 0.15, 1] : 1 }}
-            transition={{ duration: 1.2, repeat: phase === "live" ? Infinity : 0 }}
-            className={`w-2 h-2 rounded-full ${phase === "live" ? "bg-red-500" : phase === "pre" ? "bg-yellow-400" : "bg-zinc-600"}`}
-          />
+          <div className={`w-2 h-2 rounded-full ${phase === "live" ? "bg-red-500 animate-pulse" : phase === "pre" ? "bg-yellow-400" : "bg-zinc-600"}`} />
           <span className="text-xs font-mono tracking-widest uppercase text-zinc-300">
             {phase === "pre" ? "Pre-Drop" : phase === "live" ? "Live" : "Closed"}
           </span>
@@ -280,7 +271,7 @@ function PhotoViewer({ photos, phase, price, edition }: {
                   : "border-zinc-700 w-14 opacity-40 hover:opacity-70 hover:border-zinc-500"
               }`}>
               <SafeProductImage src={src} alt={`Thumb ${i + 1}`} fill
-                className="object-cover object-center" sizes="80px" />
+                className="object-cover object-center" sizes="80px" loading="lazy" />
             </button>
           ))}
         </div>
@@ -622,8 +613,7 @@ function StockBar({ stock, total }: { stock: number; total: number }) {
       <AnimatePresence>
         {isCritical && (
           <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex items-center gap-2">
-            <motion.div animate={{ opacity: [1, 0.2, 1] }} transition={{ duration: 0.8, repeat: Infinity }}
-              className="w-1.5 h-1.5 rounded-full bg-red-500" />
+            <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
             <span className="text-xs font-mono tracking-widest uppercase text-red-400">Critical — {stock} units left</span>
           </motion.div>
         )}
@@ -679,8 +669,7 @@ function PurchaseButton({ phase, reserveState, onPress, price, sizeSelected }: {
       )}
       <span className="relative z-10 flex items-center justify-center gap-3 group-hover:text-black transition-colors duration-150">
         {isLoading && (
-          <motion.span animate={{ rotate: 360 }} transition={{ duration: 0.9, repeat: Infinity, ease: "linear" }}
-            className="w-4 h-4 border-2 border-zinc-400 border-t-transparent rounded-full inline-block" />
+          <span className="w-4 h-4 border-2 border-zinc-400 border-t-transparent rounded-full inline-block animate-spin" />
         )}
         {display}
       </span>
@@ -743,12 +732,11 @@ function Ticker({ items }: { items: string[] }) {
   const text = items.join("  ·  ") + "  ·  ";
   return (
     <div className="overflow-hidden border-y border-zinc-800 py-2.5 bg-black">
-      <motion.div animate={{ x: ["0%","-50%"] }} transition={{ duration: 28, repeat: Infinity, ease: "linear" }}
-        className="flex whitespace-nowrap">
+      <div className="ticker-track flex whitespace-nowrap will-change-transform">
         {[text, text].map((t, i) => (
           <span key={i} className="text-xs tracking-widest uppercase font-mono text-zinc-500 pr-8">{t}</span>
         ))}
-      </motion.div>
+      </div>
     </div>
   );
 }
@@ -877,8 +865,7 @@ export default function DropPageClient({
   if (loading) return (
     <div className="min-h-screen w-full bg-black flex items-center justify-center"
       style={{ fontFamily: "var(--font-geist-mono), 'Courier New', monospace" }}>
-      <motion.div animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.5, repeat: Infinity }}
-        className="text-xs font-mono tracking-widest uppercase text-zinc-600">Loading drop…</motion.div>
+      <div className="text-xs font-mono tracking-widest uppercase text-zinc-600 animate-pulse">Loading drop…</div>
     </div>
   );
 
@@ -904,13 +891,11 @@ export default function DropPageClient({
         onSuccess={(t, e) => { handleVerified(t, e); setAuthOpen(false); }}
       />
 
-      <div aria-hidden className="fixed inset-0 pointer-events-none z-0 opacity-[0.035]"
-        style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`, backgroundSize: "160px 160px" }} />
+      <div aria-hidden className="fixed inset-0 pointer-events-none z-0 opacity-[0.025] bg-[radial-gradient(circle_at_20%_15%,rgba(255,255,255,0.12)_0_1px,transparent_1px),radial-gradient(circle_at_80%_65%,rgba(255,255,255,0.08)_0_1px,transparent_1px)] bg-[length:64px_64px,96px_96px]" />
 
       <AnimatePresence>
         {isCritical && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: [0, 0.6, 0] }}
-            transition={{ duration: 2.5, repeat: Infinity }}
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.35 }}
             className="fixed inset-0 pointer-events-none z-[2]"
             style={{ boxShadow: "inset 0 0 80px rgba(239,68,68,0.2)" }} />
         )}

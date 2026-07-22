@@ -34,3 +34,25 @@ test("custom pointer and product zoom update through compositor-friendly values"
     element.style.getPropertyValue("--zoom-origin"),
   )).toMatch(/^7\d(?:\.\d+)?% 2\d(?:\.\d+)?%$/);
 });
+
+test("product gallery mounts one full-size image and gates continuous effects", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/drops/dmsdy-ss25-001");
+
+  const photoArea = page.getByTestId("product-photo-area").filter({ visible: true });
+  await expect(photoArea).toBeVisible();
+  await expect(photoArea.locator('img[alt^="Product photo"]')).toHaveCount(1);
+  await expect(photoArea.getByAltText("Product photo 1")).toBeVisible();
+
+  await page.getByRole("button", { name: "Thumb 2" }).click();
+  await expect(photoArea.locator('img[alt^="Product photo"]')).toHaveCount(1);
+  await expect(photoArea.getByAltText("Product photo 2")).toBeVisible();
+  await expect(photoArea.getByAltText("Product photo 1")).toHaveCount(0);
+
+  const ticker = page.locator(".ticker-track");
+  await expect(ticker).toBeVisible();
+  expect(await ticker.evaluate(element => getComputedStyle(element).animationName)).toBe("none");
+  expect(await page.locator(".crt-overlay").evaluate(element =>
+    getComputedStyle(element, "::after").display,
+  )).toBe("none");
+});

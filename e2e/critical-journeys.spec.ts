@@ -76,10 +76,11 @@ test.describe.serial("critical customer journeys", () => {
     await reserveAndOpenCheckout(page, `expired-${Date.now()}@example.com`, "L");
     const reservationID = new URL(page.url()).pathname.split("/").pop()!;
 
-    const login = await request.post("http://127.0.0.1:8080/api/admin/login", { data: { password: adminPassword } });
+    const apiOrigin = `http://127.0.0.1:${process.env.E2E_API_PORT ?? "8080"}`;
+    const login = await request.post(`${apiOrigin}/api/admin/login`, { data: { password: adminPassword } });
     expect(login.ok()).toBeTruthy();
     const { token } = await login.json() as { token: string };
-    const expire = await request.post(`http://127.0.0.1:8080/api/admin/test/reservations/${reservationID}/expire`, {
+    const expire = await request.post(`${apiOrigin}/api/admin/test/reservations/${reservationID}/expire`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(expire.ok()).toBeTruthy();

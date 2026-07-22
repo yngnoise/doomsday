@@ -3,7 +3,8 @@ import { request, type FullConfig } from "@playwright/test";
 const adminPassword = process.env.ADMIN_PASSWORD ?? "e2e-admin-password-with-32-characters";
 
 export default async function globalSetup(_config: FullConfig) {
-  const api = await request.newContext({ baseURL: "http://127.0.0.1:8080" });
+  const apiPort = process.env.E2E_API_PORT ?? "8080";
+  const api = await request.newContext({ baseURL: `http://127.0.0.1:${apiPort}` });
   const login = await api.post("/api/admin/login", { data: { password: adminPassword } });
   if (!login.ok()) throw new Error(`Admin login failed: ${login.status()} ${await login.text()}`);
   const { token } = await login.json() as { token: string };
