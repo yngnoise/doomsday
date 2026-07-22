@@ -30,16 +30,16 @@ Serious and critical axe violations fail CI. Automated checks complement, rather
 
 ## Lighthouse baseline
 
-Measured on 17 July 2026 against a local Next.js production build, using Lighthouse 13.4.0 with its default mobile throttling:
+Measured on 21 July 2026 against a local Next.js production build, using Lighthouse 13.4.0 with its default mobile throttling. The performance values are medians from three consecutive runs:
 
 | Category | Score |
 | --- | ---: |
-| Performance | 66 |
+| Performance | 89 |
 | Accessibility | 100 |
 | Best Practices | 100 |
 | SEO | 100 |
 
-The measured cumulative layout shift was `0` and largest contentful paint was `3.3 s`. Performance is expected to vary on local Windows hardware; the accessibility, best-practices, and SEO baselines are deterministic. A hosted Lighthouse run should be captured after issue #19 receives its public URL.
+The median largest contentful paint was `2.12 s` (individual runs: `2.514 s`, `2.120 s`, and `1.946 s`), median total blocking time was `0.40 s`, and cumulative layout shift was `0`. Performance is expected to vary on local Windows hardware; the accessibility, best-practices, and SEO baselines are deterministic. A hosted Lighthouse run should be captured after issue #19 receives its public URL.
 
 Reproduce the audit against a production server:
 
