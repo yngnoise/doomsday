@@ -141,13 +141,9 @@ export default function DropsArchive({
         <div className="hidden lg:block flex-1 relative overflow-hidden bg-zinc-950">
           {previewDrop && (
             <>
-              <Image
-                src={getProductPreview(previewDrop.id)}
-                alt=""
+              <div
                 aria-hidden
-                fill
-                className="object-cover scale-110 blur-2xl brightness-20 saturate-50"
-                sizes="52vw"
+                className="absolute inset-0 bg-[radial-gradient(circle_at_50%_38%,rgba(113,113,122,0.18),transparent_48%),linear-gradient(145deg,#18181b_0%,#09090b_55%,#000_100%)]"
               />
               <Image
                 src={getProductPreview(previewDrop.id)}
@@ -155,7 +151,8 @@ export default function DropsArchive({
                 fill
                 className="object-contain object-center"
                 sizes="52vw"
-                priority
+                loading="eager"
+                fetchPriority="high"
               />
             </>
           )}

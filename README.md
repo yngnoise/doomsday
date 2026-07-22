@@ -103,7 +103,7 @@ Payment events have deterministic IDs, webhook inserts are conflict-safe, and th
 | Requests and durable jobs remain diagnosable without leaking customer data | JSON logs, correlation IDs, bounded Prometheus labels, OpenTelemetry context in the outbox | [Observability tests](drop/observability_test.go), [operations guide](docs/observability.md) |
 | Concurrency and recovery claims are repeatable | k6 contention/checkout/SSE workloads, Toxiproxy dependency failures, PostgreSQL/Redis invariant checks | [Load-testing guide](docs/load-testing.md), [CI workflow](.github/workflows/ci.yml) |
 
-The current Lighthouse baseline is Accessibility 100, Best Practices 100, SEO 100, median Performance 89, CLS 0, and median LCP 2.12 seconds on a local production build. Measurement details and reproduction steps are in [docs/accessibility.md](docs/accessibility.md).
+The current Lighthouse baseline is Accessibility 100, Best Practices 100, SEO 100, median Performance 89, CLS 0, and median LCP 2.12 seconds on a local production build. Measurement details and reproduction steps are in [docs/accessibility.md](docs/accessibility.md); image, decode, and GPU budgets are documented in [docs/performance.md](docs/performance.md).
 
 ## Technology
 
