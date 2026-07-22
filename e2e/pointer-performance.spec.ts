@@ -23,6 +23,13 @@ test("custom pointer and product zoom update through compositor-friendly values"
 
   const cursor = page.getByTestId("custom-cursor-crosshair");
   await expect(cursor).toBeVisible();
+  // The first move can enable the progressively enhanced cursor before the
+  // product viewer has attached its own pointer handler. Move once more after
+  // hydration so the zoom assertion is deterministic.
+  await page.mouse.move(
+    bounds.x + bounds.width * 0.75,
+    bounds.y + bounds.height * 0.25,
+  );
   await expect.poll(() => photoArea.evaluate((element) =>
     element.style.getPropertyValue("--zoom-origin"),
   )).toMatch(/^7\d(?:\.\d+)?% 2\d(?:\.\d+)?%$/);
